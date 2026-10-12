@@ -23,7 +23,7 @@ npm test
 
 書き込みには GitHub ログインが必要です。既存の GitHub OAuth App を利用する場合だけ、`AGENT_GUILD_GITHUB_CLIENT_ID` と `AGENT_GUILD_GITHUB_CLIENT_SECRET` をサーバーの環境変数で設定し、コールバック URL を `http://127.0.0.1:46077/api/auth/callback` に合わせてください。ポートや公開元を変える場合は `AGENT_GUILD_ORIGIN` にその origin を設定します。資格情報をリポジトリや `data/` に保存しないでください。この開発作業では資格情報の新規発行や実アカウント接続は行っていません。
 
-OAuth は公開プロフィールの利用者 ID とログイン名だけを取得し、追加スコープを要求しません。アクセストークンは本人確認後に破棄します。サーバー側のセッションはメモリに保持され、8時間で期限切れになり、サーバー再起動時にも失効します。Cookie は HttpOnly / SameSite=Lax で、HTTPS origin では Secure が付きます。書き込みは CSRF トークンで確認します。
+OAuth は公開プロフィールの利用者 ID とログイン名だけを取得し、追加スコープを要求しません。ログイン開始ごとの state と一時 Cookie に加え、PKCE S256 の challenge/verifier を照合して認可コードを交換します。アクセストークンは本人確認後に破棄します。サーバー側のセッションはメモリに保持され、8時間で期限切れになり、サーバー再起動時にも失効します。Cookie は HttpOnly / SameSite=Lax で、HTTPS origin では Secure が付きます。書き込みは CSRF トークンで確認します。
 
 開発時に `npm run dev` の Vite 画面（`http://127.0.0.1:5173`）を使う場合、そのローカル origin からの書き込みも CSRF 確認後に受け付けます。OAuth コールバック後は API サーバーの画面に戻るため、Vite の画面を使い続ける場合は `http://127.0.0.1:5173` を開き直してください。HTTPS の origin ではこのローカル開発用例外は適用しません。
 
