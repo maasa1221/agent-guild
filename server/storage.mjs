@@ -1,0 +1,185 @@
+import {DatabaseSync} from 'node:sqlite';
+import {existsSync,linkSync,mkdirSync,readFileSync,unlinkSync,writeFileSync} from 'node:fs';
+import path from 'node:path';
+import {createHash,randomUUID} from 'node:crypto';
+
+const VERSION = 2;
+const emptyState = () => ({listings:[],users:{responder:{wallet:''}},wallets:{},moderation:{},reports:[],moderationHistory:[]});
+
+function configure(db) {
+  db.exec('PRAGMA foreign_keys = ON');
+  db.exec('PRAGMA busy_timeout = 5000');
+}
+
+function createSchema(db) {
+  db.exec(`BEGIN IMMEDIATE;
+    CREATE TABLE listings (id TEXT PRIMARY KEY, payload TEXT NOT NULL);
+    CREATE TABLE answers (id TEXT PRIMARY KEY, listing_id TEXT NOT NULL REFERENCES listings(id) ON DELETE CASCADE, position INTEGER NOT NULL, payload TEXT NOT NULL, UNIQUE(listing_id, position));
+    CREATE TABLE rewards (listing_id TEXT PRIMARY KEY REFERENCES listings(id) ON DELETE CASCADE, payload TEXT NOT NULL);
+    CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE audit (id INTEGER PRIMARY KEY, actor_id TEXT NOT NULL, target_id TEXT NOT NULL, operation TEXT NOT NULL, at TEXT NOT NULL, result TEXT NOT NULL);
+    PRAGMA user_version = ${VERSION};
+    COMMIT;`);
+}
+
+function readRows(db) {
+  const state = emptyState();
+  const answers = new Map();
+  for (const row of db.prepare('SELECT listing_id, payload FROM answers ORDER BY listing_id, position').all()) {
+    if (!answers.has(row.listing_id)) answers.set(row.listing_id, []);
+    answers.get(row.listing_id).push(JSON.parse(row.payload));
+  }
+  const rewards = new Map(db.prepare('SELECT listing_id, payload FROM rewards').all().map(row => [row.listing_id, JSON.parse(row.payload)]));
+  for (const row of db.prepare('SELECT id, payload FROM listings ORDER BY rowid').all()) {
+    const listing = JSON.parse(row.payload);
+    listing.answers = answers.get(row.id) || [];
+    listing.reward = rewards.get(row.id);
+    if (!listing.reward) throw new Error(`報奨金データがありません: ${row.id}`);
+    state.listings.push(listing);
+  }
+  state.users.responder.wallet = db.prepare("SELECT value FROM settings WHERE key = 'responder_wallet'").get()?.value || '';
+  for (const row of db.prepare("SELECT key, value FROM settings WHERE key LIKE 'wallet:%'").all()) state.wallets[row.key.slice(7)]=row.value;
+  state.moderation=JSON.parse(db.prepare("SELECT value FROM settings WHERE key = 'moderation'").get()?.value||'{}');
+  state.reports=JSON.parse(db.prepare("SELECT value FROM settings WHERE key = 'reports'").get()?.value||'[]');
+  state.moderationHistory=JSON.parse(db.prepare("SELECT value FROM settings WHERE key = 'moderation_history'").get()?.value||'[]');
+  return state;
+}
+
+function writeRows(db, state) {
+  if (!Array.isArray(state?.listings) || typeof state?.users?.responder?.wallet !== 'string' || !state.wallets || typeof state.wallets !== 'object' || Array.isArray(state.wallets) || !state.moderation || typeof state.moderation !== 'object' || Array.isArray(state.moderation) || !Array.isArray(state.reports) || !Array.isArray(state.moderationHistory)) throw new Error('保存データの形式が正しくありません。');
+  db.prepare('DELETE FROM listings').run();
+  const listingInsert = db.prepare('INSERT INTO listings (id, payload) VALUES (?, ?)');
+  const answerInsert = db.prepare('INSERT INTO answers (id, listing_id, position, payload) VALUES (?, ?, ?, ?)');
+  const rewardInsert = db.prepare('INSERT INTO rewards (listing_id, payload) VALUES (?, ?)');
+  for (const listing of state.listings) {
+    if (typeof listing?.id !== 'string' || !listing.id || !Array.isArray(listing.answers) || !listing.reward || typeof listing.reward !== 'object') throw new Error('掲載データの形式が正しくありません。');
+    const {answers,reward,...fields} = listing;
+    listingInsert.run(listing.id, JSON.stringify(fields));
+    answers.forEach((answer, position) => {
+      if (typeof answer?.id !== 'string' || !answer.id) throw new Error('回答データの形式が正しくありません。');
+      answerInsert.run(answer.id, listing.id, position, JSON.stringify(answer));
+    });
+    rewardInsert.run(listing.id, JSON.stringify(reward));
+  }
+  db.prepare("INSERT INTO settings (key, value) VALUES ('responder_wallet', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(state.users.responder.wallet);
+  db.prepare("DELETE FROM settings WHERE key LIKE 'wallet:%'").run();
+  const walletInsert=db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)');
+  for (const [userId,wallet] of Object.entries(state.wallets)) {
+    if (!/^[1-9][0-9]*$/.test(userId) || typeof wallet !== 'string' || (wallet&&!/^0x[a-fA-F0-9]{40}$/.test(wallet))) throw new Error('利用者の公開アドレスが正しくありません。');
+    walletInsert.run(`wallet:${userId}`,wallet);
+  }
+  const settingInsert=db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
+  settingInsert.run('moderation',JSON.stringify(state.moderation));
+  settingInsert.run('reports',JSON.stringify(state.reports));
+  settingInsert.run('moderation_history',JSON.stringify(state.moderationHistory));
+}
+
+function insertAudit(db, entry, result) {
+  if (!entry || !/^[1-9][0-9]*$/.test(entry.actorId) || typeof entry.targetId !== 'string' || entry.targetId.length>100 || !['accept','cancel','invalid'].includes(entry.operation)) throw new Error('監査対象の形式が正しくありません。');
+  db.prepare('INSERT INTO audit (actor_id, target_id, operation, at, result) VALUES (?, ?, ?, ?, ?)').run(entry.actorId,entry.targetId,entry.operation,new Date().toISOString(),result);
+}
+
+function transact(db, change, auditEntry) {
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const state = readRows(db);
+    const result = change(state);
+    if (result && typeof result.then === 'function') throw new Error('保存トランザクション内で非同期処理はできません。');
+    writeRows(db, state);
+    if (auditEntry) insertAudit(db,auditEntry,'applied');
+    db.exec('COMMIT');
+    return result;
+  } catch (error) {
+    db.exec('ROLLBACK');
+    if (auditEntry) {
+      db.exec('BEGIN IMMEDIATE');
+      try {insertAudit(db,auditEntry,`rejected_${error.status||400}`);db.exec('COMMIT');}
+      catch (auditError) {db.exec('ROLLBACK');throw auditError;}
+    }
+    throw error;
+  }
+}
+
+function read(db) {
+  db.exec('BEGIN');
+  try {
+    const state = readRows(db);
+    db.exec('COMMIT');
+    return state;
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+function preserveLegacy(jsonPath, original) {
+  const digest=createHash('sha256').update(original).digest('hex').slice(0,16);
+  const backupPath=`${jsonPath}.backup-${digest}`;
+  if (existsSync(backupPath)) {
+    if (!readFileSync(backupPath).equals(original)) throw new Error('既存の JSON バックアップが原本と一致しません。');
+    return backupPath;
+  }
+  const tempBackup=`${backupPath}.tmp-${randomUUID()}`;
+  try {
+    writeFileSync(tempBackup,original,{flag:'wx'});
+    try { linkSync(tempBackup,backupPath); }
+    catch (error) { if (error.code!=='EEXIST') throw error; }
+    if (!readFileSync(backupPath).equals(original)) throw new Error('JSON バックアップが原本と一致しません。');
+    return backupPath;
+  } finally {
+    if (existsSync(tempBackup)) unlinkSync(tempBackup);
+  }
+}
+
+export function openStore(dataDir) {
+  mkdirSync(dataDir, {recursive:true});
+  const dbPath = path.join(dataDir, 'listings.sqlite');
+  const jsonPath = path.join(dataDir, 'listings.json');
+  let backupPath = null;
+  if (!existsSync(dbPath)) {
+    const tempPath = `${dbPath}.migrating-${randomUUID()}`;
+    let temp;
+    try {
+      const hasLegacy = existsSync(jsonPath);
+      let legacy = null;
+      let original = null;
+      if (hasLegacy) {
+        original = readFileSync(jsonPath);
+        legacy = JSON.parse(original.toString('utf8'));
+        if (!Array.isArray(legacy?.listings) || typeof legacy?.users?.responder?.wallet !== 'string') throw new Error('保存データの形式が正しくありません。');
+      }
+      temp = new DatabaseSync(tempPath);
+      configure(temp);
+      createSchema(temp);
+      if (hasLegacy) transact(temp, state => {
+        state.listings = legacy.listings;
+        state.users = legacy.users;
+      });
+      temp.close();
+      temp = null;
+      if (hasLegacy) backupPath = preserveLegacy(jsonPath, original);
+      try { linkSync(tempPath,dbPath); }
+      catch (error) { if (error.code!=='EEXIST') throw error; }
+      unlinkSync(tempPath);
+    } catch (error) {
+      if (temp) temp.close();
+      if (existsSync(tempPath)) unlinkSync(tempPath);
+      throw error;
+    }
+  }
+  const db = new DatabaseSync(dbPath);
+  configure(db);
+  const version = db.prepare('PRAGMA user_version').get().user_version;
+  if (version === 1) {
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      db.exec(`CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY, actor_id TEXT NOT NULL, target_id TEXT NOT NULL, operation TEXT NOT NULL, at TEXT NOT NULL, result TEXT NOT NULL); PRAGMA user_version = ${VERSION};`);
+      db.exec('COMMIT');
+    } catch (error) { db.exec('ROLLBACK'); db.close(); throw error; }
+  } else if (version !== VERSION) {
+    db.close();
+    throw new Error(`未対応の保存形式です (schema ${version})。JSON 原本とバックアップは変更していません。`);
+  }
+  db.exec('PRAGMA journal_mode = WAL');
+  return {dbPath,backupPath,read:()=>read(db),mutate:(change,auditEntry)=>transact(db,change,auditEntry),audit:()=>db.prepare('SELECT actor_id AS actorId, target_id AS targetId, operation, at, result FROM audit ORDER BY id').all(),close:()=>db.close()};
+}

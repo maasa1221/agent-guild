@@ -21,19 +21,26 @@ export function validateSubmission(body) {
   if (approvalEvidence.length > 1000) throw new Error('maintainer承認の根拠は1000文字以内にしてください。');
   return { ...issue, acceptance, aiEvidence, description, amount, approvalEvidence };
 }
-export function applyPaymentTransition(listing, action, actor, wallet) {
+export class TransitionConflict extends Error {
+  constructor(message) {super(message);this.status=409;}
+}
+
+export function applyPaymentTransition(listing, action, actor, wallet, answerId) {
   if (actor !== 'requester') throw new Error('このデモでは依頼者のみ操作できます。');
   const reward = listing.reward;
   if (action === 'cancel') {
     if (reward.amount === 0) throw new Error('このIssueに報奨金はありません。');
-    if (reward.status !== 'ready' && reward.status !== 'failed') throw new Error('取消できない状態です。');
+    if (reward.status !== 'ready' && reward.status !== 'failed') throw new TransitionConflict('取消できない状態です。');
     reward.status = 'cancelled'; reward.history.push({event:'cancelled',at:new Date().toISOString()}); return;
   }
   if (action !== 'accept') throw new Error('不明な操作です。');
-  if (reward.status === 'paid' || reward.status === 'cancelled') throw new Error('支払済みまたは取消済みです。二重払いはできません。');
-  if (listing.acceptedAnswerId && reward.status !== 'failed') throw new Error('この回答は検収済みです。');
+  if (reward.status === 'paid' || reward.status === 'cancelled') throw new TransitionConflict('支払済みまたは取消済みです。二重払いはできません。');
+  if (listing.acceptedAnswerId && reward.status !== 'failed') throw new TransitionConflict('この回答は検収済みです。');
   if (!listing.answers.length) throw new Error('検収する回答がありません。');
-  const answer = listing.answers.find(a => a.id === listing.acceptedAnswerId) || listing.answers[0];
+  const answer = listing.answers.find(a => a.id === answerId);
+  if (!answer) throw new Error('検収する回答を選んでください。');
+  if (listing.acceptedAnswerId && listing.acceptedAnswerId !== answer.id) throw new TransitionConflict('再試行では前回検収した回答を選んでください。');
+  if (reward.status==='failed' && !wallet) throw new TransitionConflict('ウォレット未登録のままでは再試行できません。');
   listing.acceptedAnswerId = answer.id;
   if (reward.amount === 0) { reward.history.push({event:'accepted_no_reward',at:new Date().toISOString()}); return; }
   if (!wallet) { reward.status = 'failed'; reward.history.push({event:'failed_missing_wallet',at:new Date().toISOString()}); return; }
