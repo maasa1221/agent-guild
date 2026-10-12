@@ -3,6 +3,7 @@ import {createHash,randomBytes,timingSafeEqual} from 'node:crypto';
 const SESSION_MS = 8 * 60 * 60 * 1000;
 const STATE_MS = 10 * 60 * 1000;
 const hash = value => createHash('sha256').update(value).digest('hex');
+const challenge = verifier => createHash('sha256').update(verifier).digest('base64url');
 const random = () => randomBytes(32).toString('base64url');
 
 function cookie(req,name) {
@@ -68,11 +69,14 @@ export function createAuthService({clientId,clientSecret,origin,fetcher=fetch,no
       expired();
       const state=random();
       const nonce=random();
-      states.set(hash(state),{nonceHash:hash(nonce),expires:now()+STATE_MS});
+      const codeVerifier=random();
+      states.set(hash(state),{nonceHash:hash(nonce),codeVerifier,expires:now()+STATE_MS});
       const target=new URL(authorizeUrl);
       target.searchParams.set('client_id',clientId);
       target.searchParams.set('redirect_uri',callbackUrl);
       target.searchParams.set('state',state);
+      target.searchParams.set('code_challenge',challenge(codeVerifier));
+      target.searchParams.set('code_challenge_method','S256');
       setCookies(res,[stateCookie(nonce,STATE_MS/1000)]);
       res.writeHead(302,{'Location':target.toString(),'Cache-Control':'no-store'});
       res.end();
@@ -90,7 +94,7 @@ export function createAuthService({clientId,clientSecret,origin,fetcher=fetch,no
         return true;
       }
       try {
-        const tokenResponse=await fetcher(tokenUrl,{method:'POST',headers:{Accept:'application/json','Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({client_id:clientId,client_secret:clientSecret,code,redirect_uri:callbackUrl}),signal:AbortSignal.timeout(10000)});
+        const tokenResponse=await fetcher(tokenUrl,{method:'POST',headers:{Accept:'application/json','Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({client_id:clientId,client_secret:clientSecret,code,redirect_uri:callbackUrl,code_verifier:entry.codeVerifier}),signal:AbortSignal.timeout(10000)});
         if (!tokenResponse.ok) throw new Error('token exchange failed');
         const token=(await tokenResponse.json()).access_token;
         if (typeof token!=='string'||!token) throw new Error('token missing');

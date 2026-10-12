@@ -2,14 +2,21 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import {once} from 'node:events';
+import {createHash} from 'node:crypto';
 import {createAuthService} from './auth.mjs';
 
 test('OAuth state, session, CSRF, actor spoofing, logout and expiry stay server-side',async t=>{
   let time=Date.now();
   const calls=[];
+  const challenge=verifier=>createHash('sha256').update(verifier).digest('base64url');
+  let expectedChallenge='';
   const fetcher=async (url,options)=>{
     calls.push({url,options});
-    if (url.endsWith('/access_token')) return new Response(JSON.stringify({access_token:'fixture-access-token'}),{status:200});
+    if (url.endsWith('/access_token')) {
+      const verifier=new URLSearchParams(options.body).get('code_verifier');
+      if (!verifier||challenge(verifier)!==expectedChallenge) return new Response('{}',{status:400});
+      return new Response(JSON.stringify({access_token:'fixture-access-token'}),{status:200});
+    }
     if (url.endsWith('/user')) return new Response(JSON.stringify({id:123,login:'alice'}),{status:200});
     throw new Error('unexpected outbound request');
   };
@@ -37,6 +44,10 @@ test('OAuth state, session, CSRF, actor spoofing, logout and expiry stay server-
   assert.equal(target.origin,'https://github.com');
   assert.equal(target.searchParams.get('redirect_uri'),origin+'/api/auth/callback');
   assert.equal(target.searchParams.has('scope'),false);
+  assert.equal(target.searchParams.get('code_challenge_method'),'S256');
+  assert.match(target.searchParams.get('code_challenge'),/^[A-Za-z0-9_-]{43}$/);
+  assert.equal(target.searchParams.has('code_verifier'),false);
+  expectedChallenge=target.searchParams.get('code_challenge');
   const state=target.searchParams.get('state');
   const oauthCookie=login.headers.getSetCookie()[0].split(';')[0];
   assert.match(login.headers.getSetCookie()[0],/HttpOnly; SameSite=Lax/);
@@ -45,11 +56,17 @@ test('OAuth state, session, CSRF, actor spoofing, logout and expiry stay server-
   assert.equal(calls.length,0);
   assert.equal((await request(`/api/auth/callback?code=fixture&state=${state}`,{headers:{Cookie:oauthCookie}})).status,400);
   const second=await request('/api/auth/login');
-  const secondState=new URL(second.headers.get('location')).searchParams.get('state');
+  const secondTarget=new URL(second.headers.get('location'));
+  const secondState=secondTarget.searchParams.get('state');
+  expectedChallenge=secondTarget.searchParams.get('code_challenge');
+  assert.notEqual(expectedChallenge,target.searchParams.get('code_challenge'));
   const secondCookie=second.headers.getSetCookie()[0].split(';')[0];
   const callback=await request(`/api/auth/callback?code=fixture&state=${secondState}`,{headers:{Cookie:secondCookie}});
   assert.equal(callback.status,302);
   assert.equal(calls.length,2);
+  const submittedVerifier=new URLSearchParams(calls[0].options.body).get('code_verifier');
+  assert.match(submittedVerifier,/^[A-Za-z0-9_-]{43}$/);
+  assert.equal(challenge(submittedVerifier),expectedChallenge);
   const sessionCookie=callback.headers.getSetCookie().find(value=>value.startsWith('ag_session=')).split(';')[0];
   assert.match(callback.headers.getSetCookie().find(value=>value.startsWith('ag_session=')),/HttpOnly; SameSite=Lax/);
   const me=await request('/api/auth/me',{headers:{Cookie:sessionCookie}});
@@ -68,8 +85,20 @@ test('OAuth state, session, CSRF, actor spoofing, logout and expiry stay server-
   assert.equal((await post(details.csrfToken,'http://127.0.0.1:5173')).status,200);
   assert.equal((await request('/api/auth/logout',{method:'POST',headers:{Cookie:sessionCookie,'X-CSRF-Token':details.csrfToken,Origin:origin}})).status,200);
   assert.equal((await post(details.csrfToken)).status,401);
+  const mismatched=await request('/api/auth/login');
+  const mismatchedTarget=new URL(mismatched.headers.get('location'));
+  const mismatchedState=mismatchedTarget.searchParams.get('state');
+  const mismatchedCookie=mismatched.headers.getSetCookie()[0].split(';')[0];
+  expectedChallenge='A'.repeat(43);
+  assert.notEqual(expectedChallenge,mismatchedTarget.searchParams.get('code_challenge'));
+  const rejected=await request(`/api/auth/callback?code=fixture&state=${mismatchedState}`,{headers:{Cookie:mismatchedCookie}});
+  assert.equal(rejected.status,502);
+  assert.equal(rejected.headers.getSetCookie().some(value=>value.startsWith('ag_session=')),false);
+  assert.equal((await request(`/api/auth/callback?code=fixture&state=${mismatchedState}`,{headers:{Cookie:mismatchedCookie}})).status,400);
   const third=await request('/api/auth/login');
-  const thirdState=new URL(third.headers.get('location')).searchParams.get('state');
+  const thirdTarget=new URL(third.headers.get('location'));
+  const thirdState=thirdTarget.searchParams.get('state');
+  expectedChallenge=thirdTarget.searchParams.get('code_challenge');
   const thirdCookie=third.headers.getSetCookie()[0].split(';')[0];
   const again=await request(`/api/auth/callback?code=fixture&state=${thirdState}`,{headers:{Cookie:thirdCookie}});
   const againCookie=again.headers.getSetCookie().find(value=>value.startsWith('ag_session=')).split(';')[0];
