@@ -37,6 +37,10 @@ USDCの報奨金は状態遷移だけの**sandbox/demo**です。資金預託、
 
 本番化には認証と権限、GitHub maintainer承認の検証、DBと同時実行時の冪等性、監査ログ、スパム対策、チェーン・トークン、鍵管理、アップグレード権限、返金権限、検収主体、送金provider、KYC/法務と資金管理のレビューが必要です。Stripeの[stablecoin payouts](https://docs.stripe.com/connect/stablecoin-payouts)は現時点で米国プラットフォーム限定のprivate previewで、日本向けUSDC送金手段として採用済みではありません。資金移動に関する判断は[金融庁FAQ](https://www.fsa.go.jp/news/27/sonota/20151214-2.html)等を踏まえた専門レビューが必要で、無料・OSS・自己管理だけを理由に登録不要とは判断していません。
 
+## ロードマップ
+
+[開発段階と Issue の優先順](docs/roadmap.md)を参照してください。現在はローカルデモであり、本番認証・実送金・公開運用は未実装です。
+
 ## OSS
 
 MIT License。改善案やプルリクエストは [CONTRIBUTING.md](CONTRIBUTING.md) を参照してください。公開ソースに個人用設定・秘密値・ローカル保存データを含めないでください。
