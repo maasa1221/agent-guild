@@ -69,4 +69,7 @@ test('poster can recheck evidence and current issue, other users cannot',async t
   assert.equal(sourceStatus.snapshot.state,'open');
   assert.equal(sourceStatus.current.state,'closed');
   assert.notEqual(sourceStatus.snapshot.updatedAt,sourceStatus.current.updatedAt);
+  writeFileSync(statePath,'valid');
+  const cachedStatus=await (await request('/api/listings/quest/source-status')).json();
+  assert.equal(cachedStatus.current.state,'closed');
 });

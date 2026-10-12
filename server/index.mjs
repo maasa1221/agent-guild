@@ -66,6 +66,7 @@ function checkPostLimit(state,userId) {
   if (count>=postLimit) throw new HttpError(429,'投稿が短時間に集中しています。しばらく待ってください。');
 }
 
+const sourceStatusCache=new Map();
 const server=http.createServer(async(req,res)=>{
   try {
     const url=new URL(req.url,'http://localhost');
@@ -84,7 +85,11 @@ const server=http.createServer(async(req,res)=>{
       const state=store.read();
       const item=all(state).find(x=>x.id===sourceMatch[1]);
       if (!item || (state.moderation[item.id]?.hidden && !adminIds.has(auth.current(req)?.user.id))) return json(res,404,{error:'見つかりません。'});
-      const current=await githubIssue(parseIssueUrl(item.sourceUrl));
+      const cached=sourceStatusCache.get(item.sourceUrl);
+      const now=Date.now();
+      const currentRequest=cached&&cached.expires>now?cached.request:githubIssue(parseIssueUrl(item.sourceUrl));
+      if (!cached||cached.expires<=now) sourceStatusCache.set(item.sourceUrl,{request:currentRequest,expires:now+60000});
+      const current=await currentRequest;
       return json(res,200,{snapshot:{title:item.title,state:item.state,updatedAt:item.githubUpdatedAt||null},current:{title:current.title,state:current.state,updatedAt:current.githubUpdatedAt},sourceUrl:item.sourceUrl});
     }
     if (req.method==='GET'&&p.startsWith('/api/listings/')) {
