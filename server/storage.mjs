@@ -3,7 +3,7 @@ import {existsSync,linkSync,mkdirSync,readFileSync,unlinkSync,writeFileSync} fro
 import path from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
 
-const VERSION = 1;
+const VERSION = 2;
 const emptyState = () => ({listings:[],users:{responder:{wallet:''}},wallets:{}});
 
 function configure(db) {
@@ -17,6 +17,7 @@ function createSchema(db) {
     CREATE TABLE answers (id TEXT PRIMARY KEY, listing_id TEXT NOT NULL REFERENCES listings(id) ON DELETE CASCADE, position INTEGER NOT NULL, payload TEXT NOT NULL, UNIQUE(listing_id, position));
     CREATE TABLE rewards (listing_id TEXT PRIMARY KEY REFERENCES listings(id) ON DELETE CASCADE, payload TEXT NOT NULL);
     CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE audit (id INTEGER PRIMARY KEY, actor_id TEXT NOT NULL, target_id TEXT NOT NULL, operation TEXT NOT NULL, at TEXT NOT NULL, result TEXT NOT NULL);
     PRAGMA user_version = ${VERSION};
     COMMIT;`);
 }
@@ -66,17 +67,28 @@ function writeRows(db, state) {
   }
 }
 
-function transact(db, change) {
+function insertAudit(db, entry, result) {
+  if (!entry || !/^[1-9][0-9]*$/.test(entry.actorId) || typeof entry.targetId !== 'string' || entry.targetId.length>100 || !['accept','cancel','invalid'].includes(entry.operation)) throw new Error('監査対象の形式が正しくありません。');
+  db.prepare('INSERT INTO audit (actor_id, target_id, operation, at, result) VALUES (?, ?, ?, ?, ?)').run(entry.actorId,entry.targetId,entry.operation,new Date().toISOString(),result);
+}
+
+function transact(db, change, auditEntry) {
   db.exec('BEGIN IMMEDIATE');
   try {
     const state = readRows(db);
     const result = change(state);
     if (result && typeof result.then === 'function') throw new Error('保存トランザクション内で非同期処理はできません。');
     writeRows(db, state);
+    if (auditEntry) insertAudit(db,auditEntry,'applied');
     db.exec('COMMIT');
     return result;
   } catch (error) {
     db.exec('ROLLBACK');
+    if (auditEntry) {
+      db.exec('BEGIN IMMEDIATE');
+      try {insertAudit(db,auditEntry,`rejected_${error.status||400}`);db.exec('COMMIT');}
+      catch (auditError) {db.exec('ROLLBACK');throw auditError;}
+    }
     throw error;
   }
 }
@@ -151,10 +163,16 @@ export function openStore(dataDir) {
   const db = new DatabaseSync(dbPath);
   configure(db);
   const version = db.prepare('PRAGMA user_version').get().user_version;
-  if (version !== VERSION) {
+  if (version === 1) {
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      db.exec(`CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY, actor_id TEXT NOT NULL, target_id TEXT NOT NULL, operation TEXT NOT NULL, at TEXT NOT NULL, result TEXT NOT NULL); PRAGMA user_version = ${VERSION};`);
+      db.exec('COMMIT');
+    } catch (error) { db.exec('ROLLBACK'); db.close(); throw error; }
+  } else if (version !== VERSION) {
     db.close();
     throw new Error(`未対応の保存形式です (schema ${version})。JSON 原本とバックアップは変更していません。`);
   }
   db.exec('PRAGMA journal_mode = WAL');
-  return {dbPath,backupPath,read:()=>read(db),mutate:change=>transact(db,change),close:()=>db.close()};
+  return {dbPath,backupPath,read:()=>read(db),mutate:(change,auditEntry)=>transact(db,change,auditEntry),audit:()=>db.prepare('SELECT actor_id AS actorId, target_id AS targetId, operation, at, result FROM audit ORDER BY id').all(),close:()=>db.close()};
 }

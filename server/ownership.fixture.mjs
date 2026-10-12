@@ -12,7 +12,7 @@ globalThis.fetch=async (input,options={})=>{
     if (!id) throw new Error('unexpected user token');
     return respond({id,login});
   }
-  if (/^https:\/\/api\.github\.com\/repos\/owner\/repo\/issues\/[13]$/.test(url)) {
+  if (/^https:\/\/api\.github\.com\/repos\/owner\/repo\/issues\/[134]$/.test(url)) {
     const number=Number(url.split('/').at(-1));
     return respond({html_url:`https://github.com/owner/repo/issues/${number}`,number,title:'Fixture issue',body:'Fixture',labels:[],state:'open',updated_at:'2026-10-12T00:00:00Z'});
   }

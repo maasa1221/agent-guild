@@ -6,6 +6,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {openStore} from './storage.mjs';
 
 const source=path.dirname(fileURLToPath(import.meta.url));
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
@@ -68,6 +69,8 @@ test('two users and anonymous requests enforce ownership without changing denied
   assert.equal((await list()).listings.find(x=>x.id===quest.id).reward.status,'ready');
   assert.equal((await post(`${base}/payment`,alice,{action:'accept',answerId:answer.id})).status,200);
   assert.equal((await list()).listings.find(x=>x.id===quest.id).reward.status,'failed');
+  assert.equal((await post(`${base}/payment`,alice,{action:'accept',answerId:answer.id})).status,409);
+  assert.equal((await list()).listings.find(x=>x.id===quest.id).reward.history.length,1);
   assert.equal((await post(`${base}/payment`,bob,{action:'accept',answerId:answer.id})).status,403);
   assert.equal((await list()).listings.find(x=>x.id===quest.id).reward.status,'failed');
   const wallet='0x'+'b'.repeat(40);
@@ -79,13 +82,34 @@ test('two users and anonymous requests enforce ownership without changing denied
   const paid=(await list()).listings.find(x=>x.id===quest.id);
   assert.equal(paid.reward.status,'paid');
   assert.equal(paid.reward.paidTo,wallet);
-  assert.equal((await post(`${base}/payment`,alice,{action:'accept',answerId:answer.id})).status,400);
+  assert.equal((await post(`${base}/payment`,alice,{action:'accept',answerId:answer.id})).status,409);
   const cancellable=await post('/api/listings',alice,{issueUrl:'https://github.com/owner/repo/issues/3',acceptance:'Fixture acceptance',aiPolicy:'poster_declared',aiEvidence:'Fixture evidence',amount:10});
   assert.equal(cancellable.status,201);
   const cancelId=(await cancellable.json()).id;
   assert.equal((await post(`/api/listings/${cancelId}/payment`,bob,{action:'cancel'})).status,403);
   assert.equal((await post(`/api/listings/${cancelId}/payment`,alice,{action:'cancel'})).status,200);
   assert.equal((await list()).listings.find(x=>x.id===cancelId).reward.status,'cancelled');
+  const racing=await post('/api/listings',alice,{issueUrl:'https://github.com/owner/repo/issues/4',acceptance:'Fixture acceptance',aiPolicy:'poster_declared',aiEvidence:'Fixture evidence',amount:10});
+  assert.equal(racing.status,201);
+  const raceId=(await racing.json()).id;
+  const raceAnswer=(await (await post(`/api/listings/${raceId}/answers`,bob,{text:'Bob completes race quest'})).json()).answers[0];
+  const results=await Promise.all([
+    post(`/api/listings/${raceId}/payment`,alice,{action:'accept',answerId:raceAnswer.id}),
+    post(`/api/listings/${raceId}/payment`,alice,{action:'cancel'})
+  ]);
+  assert.deepEqual(results.map(x=>x.status).sort(),[200,409]);
+  const raced=(await list()).listings.find(x=>x.id===raceId);
+  assert.equal(raced.reward.history.length,1);
+  assert.ok(['paid','cancelled'].includes(raced.reward.status));
+  const db=openStore(path.join(root,'data'));
+  const audit=db.audit();
+  db.close();
+  const raceAudit=audit.filter(x=>x.targetId===raceId);
+  assert.deepEqual(raceAudit.map(x=>x.result).sort(),['applied','rejected_409']);
+  assert.ok(raceAudit.every(x=>x.actorId===alice.id && ['accept','cancel'].includes(x.operation) && !Number.isNaN(Date.parse(x.at))));
+  assert.equal(audit.filter(x=>x.targetId===quest.id && x.result==='applied').length,2);
+  assert.equal(audit.some(x=>x.targetId===quest.id && x.result==='rejected_403' && x.actorId===bob.id),true);
+  assert.equal(JSON.stringify(audit).includes(wallet),false);
   assert.equal((await post('/api/listings/legacy/payment',alice,{action:'cancel'})).status,403);
   assert.equal((await post('/api/listings/legacy/answers',bob,{text:'Cannot answer legacy'})).status,403);
   assert.equal((await list()).listings.find(x=>x.id==='legacy').reward.status,'ready');

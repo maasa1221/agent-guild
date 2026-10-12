@@ -97,6 +97,8 @@ const server=http.createServer(async(req,res)=>{
     const match=p.match(/^\/api\/listings\/([^/]+)\/(answers|payment|start)$/);
     if (req.method==='POST'&&match) {
       const input=await body(req);
+      const action=String(input.action||'');
+      const auditEntry=match[2]==='payment'?{actorId:session.user.id,targetId:match[1],operation:['accept','cancel'].includes(action)?action:'invalid'}:undefined;
       const item=store.mutate(state=>{
         const listing=state.listings.find(x=>x.id===match[1]);
         if (!listing) throw new HttpError(404,'デモ見本には投稿できません。');
@@ -119,14 +121,13 @@ const server=http.createServer(async(req,res)=>{
           return listing;
         }
         if (listing.posterId!==session.user.id) throw new HttpError(403,'掲載者本人だけが検収・取消できます。');
-        const action=String(input.action||'');
         const answerId=String(input.answerId||'');
         const selected=action==='accept'?listing.answers.find(answer=>answer.id===answerId):null;
         if (action==='accept'&&!selected?.authorId) throw new HttpError(400,'検収する回答の本人情報を確認できません。');
         const wallet=selected?state.wallets[selected.authorId]||'':'';
         applyPaymentTransition(listing,action,'requester',wallet,answerId);
         return listing;
-      });
+      },auditEntry);
       return json(res,match[2]==='answers'?201:200,item);
     }
     if (p.startsWith('/api/')) return json(res,404,{error:'APIが見つかりません。'});
