@@ -4,7 +4,7 @@ import path from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
 
 const VERSION = 2;
-const emptyState = () => ({listings:[],users:{responder:{wallet:''}},wallets:{}});
+const emptyState = () => ({listings:[],users:{responder:{wallet:''}},wallets:{},moderation:{},reports:[],moderationHistory:[]});
 
 function configure(db) {
   db.exec('PRAGMA foreign_keys = ON');
@@ -39,11 +39,14 @@ function readRows(db) {
   }
   state.users.responder.wallet = db.prepare("SELECT value FROM settings WHERE key = 'responder_wallet'").get()?.value || '';
   for (const row of db.prepare("SELECT key, value FROM settings WHERE key LIKE 'wallet:%'").all()) state.wallets[row.key.slice(7)]=row.value;
+  state.moderation=JSON.parse(db.prepare("SELECT value FROM settings WHERE key = 'moderation'").get()?.value||'{}');
+  state.reports=JSON.parse(db.prepare("SELECT value FROM settings WHERE key = 'reports'").get()?.value||'[]');
+  state.moderationHistory=JSON.parse(db.prepare("SELECT value FROM settings WHERE key = 'moderation_history'").get()?.value||'[]');
   return state;
 }
 
 function writeRows(db, state) {
-  if (!Array.isArray(state?.listings) || typeof state?.users?.responder?.wallet !== 'string' || !state.wallets || typeof state.wallets !== 'object' || Array.isArray(state.wallets)) throw new Error('保存データの形式が正しくありません。');
+  if (!Array.isArray(state?.listings) || typeof state?.users?.responder?.wallet !== 'string' || !state.wallets || typeof state.wallets !== 'object' || Array.isArray(state.wallets) || !state.moderation || typeof state.moderation !== 'object' || Array.isArray(state.moderation) || !Array.isArray(state.reports) || !Array.isArray(state.moderationHistory)) throw new Error('保存データの形式が正しくありません。');
   db.prepare('DELETE FROM listings').run();
   const listingInsert = db.prepare('INSERT INTO listings (id, payload) VALUES (?, ?)');
   const answerInsert = db.prepare('INSERT INTO answers (id, listing_id, position, payload) VALUES (?, ?, ?, ?)');
@@ -65,6 +68,10 @@ function writeRows(db, state) {
     if (!/^[1-9][0-9]*$/.test(userId) || typeof wallet !== 'string' || (wallet&&!/^0x[a-fA-F0-9]{40}$/.test(wallet))) throw new Error('利用者の公開アドレスが正しくありません。');
     walletInsert.run(`wallet:${userId}`,wallet);
   }
+  const settingInsert=db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
+  settingInsert.run('moderation',JSON.stringify(state.moderation));
+  settingInsert.run('reports',JSON.stringify(state.reports));
+  settingInsert.run('moderation_history',JSON.stringify(state.moderationHistory));
 }
 
 function insertAudit(db, entry, result) {

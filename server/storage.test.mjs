@@ -23,7 +23,7 @@ test('migrates JSON once, preserves original and backup, and persists updates af
   const jsonPath=path.join(dir,'listings.json');
   writeFileSync(jsonPath,original);
   const store=openStore(dir);
-  assert.deepEqual(store.read(),{...legacy,wallets:{}});
+  assert.deepEqual(store.read(),{...legacy,wallets:{},moderation:{},reports:[],moderationHistory:[]});
   assert.equal(readFileSync(jsonPath,'utf8'),original);
   assert.equal(readFileSync(store.backupPath,'utf8'),original);
   store.mutate(state=>{

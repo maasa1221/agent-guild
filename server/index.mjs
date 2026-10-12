@@ -52,7 +52,18 @@ async function githubIssue(parsed) {
   } finally { clearTimeout(timeout); }
 }
 
+const adminIds=new Set((process.env.AGENT_GUILD_ADMIN_IDS||'').split(',').map(id=>id.trim()).filter(id=>/^[1-9][0-9]*$/.test(id)));
+const postLimit=Number(process.env.AGENT_GUILD_POST_LIMIT||5);
+const postWindowMs=Number(process.env.AGENT_GUILD_POST_WINDOW_MS||60000);
+if (!Number.isSafeInteger(postLimit)||postLimit<1||postLimit>100||!Number.isSafeInteger(postWindowMs)||postWindowMs<1000||postWindowMs>86400000) throw new Error('投稿制限の設定が正しくありません。');
 function all(state) { return [...state.listings,...demo]; }
+function visible(state) {return all(state).filter(item=>!state.moderation[item.id]?.hidden);}
+function requireAdmin(session) {if (!adminIds.has(session.user.id)) throw new HttpError(403,'管理者だけが操作できます。');}
+function checkPostLimit(state,userId) {
+  const since=Date.now()-postWindowMs;
+  const count=state.listings.reduce((n,item)=>n+(item.posterId===userId&&Date.parse(item.createdAt)>=since?1:0)+item.answers.filter(answer=>answer.authorId===userId&&Date.parse(answer.createdAt)>=since).length,0);
+  if (count>=postLimit) throw new HttpError(429,'投稿が短時間に集中しています。しばらく待ってください。');
+}
 
 const server=http.createServer(async(req,res)=>{
   try {
@@ -65,11 +76,13 @@ const server=http.createServer(async(req,res)=>{
     if (req.method==='GET'&&p==='/api/listings') {
       const state=store.read();
       const userId=auth.current(req)?.user.id;
-      return json(res,200,{listings:all(state),wallet:userId?state.wallets[userId]||'':''});
+      return json(res,200,{listings:visible(state),wallet:userId?state.wallets[userId]||'':''});
     }
     if (req.method==='GET'&&p.startsWith('/api/listings/')) {
-      const item=all(store.read()).find(x=>x.id===p.split('/')[3]);
-      return json(res,item?200:404,item||{error:'見つかりません。'});
+      const state=store.read();
+      const item=all(state).find(x=>x.id===p.split('/')[3]);
+      const admin=adminIds.has(auth.current(req)?.user.id);
+      return json(res,item&&(!state.moderation[item.id]?.hidden||admin)?200:404,item&&(!state.moderation[item.id]?.hidden||admin)?item:{error:'見つかりません。'});
     }
     if (req.method==='POST'&&p==='/api/preview') {
       const input=await body(req);
@@ -77,9 +90,12 @@ const server=http.createServer(async(req,res)=>{
     }
     if (req.method==='POST'&&p==='/api/listings') {
       const input=validateSubmission(await body(req));
-      if (all(store.read()).some(x=>x.sourceUrl.toLowerCase()===input.url.toLowerCase())) return json(res,409,{error:'このIssue URLは既に掲載されています。'});
+      const before=store.read();
+      checkPostLimit(before,session.user.id);
+      if (all(before).some(x=>x.sourceUrl.toLowerCase()===input.url.toLowerCase())) return json(res,409,{error:'このIssue URLは既に掲載されています。'});
       const gh=await githubIssue(input);
       const item=store.mutate(state=>{
+        checkPostLimit(state,session.user.id);
         if (all(state).some(x=>x.sourceUrl.toLowerCase()===gh.sourceUrl.toLowerCase())) throw new HttpError(409,'このIssue URLは既に掲載されています。');
         const listing={id:crypto.randomUUID(),demo:false,posterId:session.user.id,...gh,description:input.description,acceptance:input.acceptance,aiPolicy:'poster_declared',aiEvidence:input.aiEvidence,approvalEvidence:input.approvalEvidence,approvalStatus:input.approvalEvidence?'poster_claimed':'unconfirmed',reward:{amount:input.amount,status:input.amount?'ready':'none',history:[]},answers:[],working:false,acceptedAnswerId:null,createdAt:new Date().toISOString()};
         state.listings.unshift(listing);
@@ -94,6 +110,49 @@ const server=http.createServer(async(req,res)=>{
       store.mutate(state=>{state.wallets[session.user.id]=wallet;});
       return json(res,200,{wallet});
     }
+    if (req.method==='POST'&&p==='/api/reports') {
+      const input=await body(req);
+      const listingId=String(input.listingId||'');
+      const answerId=String(input.answerId||'');
+      const reason=String(input.reason||'').trim();
+      if (reason.length<10||reason.length>500) throw new HttpError(400,'通報理由は10〜500文字で入力してください。');
+      const report=store.mutate(state=>{
+        const listing=state.listings.find(item=>item.id===listingId);
+        if (!listing || (answerId&&!listing.answers.some(answer=>answer.id===answerId))) throw new HttpError(404,'通報対象が見つかりません。');
+        if (state.reports.some(report=>report.reporterId===session.user.id&&report.listingId===listingId&&report.answerId===(answerId||null))) throw new HttpError(409,'この対象は通報済みです。');
+        if (state.reports.filter(report=>report.reporterId===session.user.id&&Date.parse(report.at)>=Date.now()-postWindowMs).length>=postLimit) throw new HttpError(429,'通報が短時間に集中しています。');
+        const entry={id:crypto.randomUUID(),reporterId:session.user.id,listingId,answerId:answerId||null,reason,at:new Date().toISOString()};
+        state.reports.push(entry);
+        return {id:entry.id};
+      });
+      return json(res,201,report);
+    }
+    if (req.method==='GET'&&p==='/api/moderation') {
+      const viewer=auth.current(req);
+      if (!viewer) return json(res,401,{error:'ログインしてください。'});
+      requireAdmin(viewer);
+      const state=store.read();
+      return json(res,200,{reports:state.reports,moderation:state.moderation,history:state.moderationHistory});
+    }
+    const moderationMatch=p.match(/^\/api\/moderation\/([^/]+)$/);
+    if (req.method==='POST'&&moderationMatch) {
+      requireAdmin(session);
+      const input=await body(req);
+      const action=String(input.action||'');
+      const reason=String(input.reason||'').trim();
+      if (!['hide','restore'].includes(action)||reason.length<10||reason.length>500) throw new HttpError(400,'操作と理由を確認してください。');
+      const result=store.mutate(state=>{
+        const item=state.listings.find(x=>x.id===moderationMatch[1]);
+        if (!item) throw new HttpError(404,'掲載が見つかりません。');
+        const hidden=Boolean(state.moderation[item.id]?.hidden);
+        if (hidden===(action==='hide')) throw new HttpError(409,'既にその状態です。');
+        const at=new Date().toISOString();
+        state.moderation[item.id]={hidden:action==='hide',updatedAt:at,updatedBy:session.user.id};
+        state.moderationHistory.push({actorId:session.user.id,targetId:item.id,action,at,reason});
+        return state.moderation[item.id];
+      });
+      return json(res,200,result);
+    }
     const match=p.match(/^\/api\/listings\/([^/]+)\/(answers|payment|start)$/);
     if (req.method==='POST'&&match) {
       const input=await body(req);
@@ -103,6 +162,7 @@ const server=http.createServer(async(req,res)=>{
         const listing=state.listings.find(x=>x.id===match[1]);
         if (!listing) throw new HttpError(404,'デモ見本には投稿できません。');
         if (!listing.posterId) throw new HttpError(403,'旧デモ掲載は所有者不明のため操作できません。');
+        if (state.moderation[listing.id]?.hidden) throw new HttpError(403,'非表示の掲載は操作できません。');
         if (match[2]==='start') {
           if (listing.posterId===session.user.id) throw new HttpError(403,'自分の依頼には回答できません。');
           if (listing.acceptedAnswerId||listing.reward.status==='cancelled') throw new Error('このクエストは開始できません。');
@@ -116,6 +176,7 @@ const server=http.createServer(async(req,res)=>{
           if (text.length<10||text.length>3000) throw new Error('納品内容は10〜3000文字で入力してください。');
           if (evidence&&(!/^https:\/\/(github\.com|gist\.github\.com)\//.test(evidence)||evidence.length>500)) throw new Error('成果物URLはGitHubのHTTPS URLにしてください。');
           if (listing.acceptedAnswerId||listing.reward.status==='cancelled') throw new Error('このクエストは回答を受け付けていません。');
+          checkPostLimit(state,session.user.id);
           listing.working=true;
           listing.answers.push({id:crypto.randomUUID(),authorId:session.user.id,text,evidence,createdAt:new Date().toISOString()});
           return listing;
