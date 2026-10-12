@@ -59,10 +59,13 @@ const server=http.createServer(async(req,res)=>{
     const url=new URL(req.url,'http://localhost');
     const p=url.pathname;
     if (await auth.handle(req,res,url)) return;
-    if (p.startsWith('/api/')&&req.method!=='GET'&&!auth.requireSession(req,res,{csrf:true})) return;
+    const write=p.startsWith('/api/')&&req.method!=='GET';
+    const session=write?auth.requireSession(req,res,{csrf:true}):null;
+    if (write&&!session) return;
     if (req.method==='GET'&&p==='/api/listings') {
       const state=store.read();
-      return json(res,200,{listings:all(state),wallet:state.users.responder.wallet});
+      const userId=auth.current(req)?.user.id;
+      return json(res,200,{listings:all(state),wallet:userId?state.wallets[userId]||'':''});
     }
     if (req.method==='GET'&&p.startsWith('/api/listings/')) {
       const item=all(store.read()).find(x=>x.id===p.split('/')[3]);
@@ -78,7 +81,7 @@ const server=http.createServer(async(req,res)=>{
       const gh=await githubIssue(input);
       const item=store.mutate(state=>{
         if (all(state).some(x=>x.sourceUrl.toLowerCase()===gh.sourceUrl.toLowerCase())) throw new HttpError(409,'このIssue URLは既に掲載されています。');
-        const listing={id:crypto.randomUUID(),demo:false,...gh,description:input.description,acceptance:input.acceptance,aiPolicy:'poster_declared',aiEvidence:input.aiEvidence,approvalEvidence:input.approvalEvidence,approvalStatus:input.approvalEvidence?'poster_claimed':'unconfirmed',reward:{amount:input.amount,status:input.amount?'ready':'none',history:[]},answers:[],working:false,acceptedAnswerId:null,createdAt:new Date().toISOString()};
+        const listing={id:crypto.randomUUID(),demo:false,posterId:session.user.id,...gh,description:input.description,acceptance:input.acceptance,aiPolicy:'poster_declared',aiEvidence:input.aiEvidence,approvalEvidence:input.approvalEvidence,approvalStatus:input.approvalEvidence?'poster_claimed':'unconfirmed',reward:{amount:input.amount,status:input.amount?'ready':'none',history:[]},answers:[],working:false,acceptedAnswerId:null,createdAt:new Date().toISOString()};
         state.listings.unshift(listing);
         return listing;
       });
@@ -88,7 +91,7 @@ const server=http.createServer(async(req,res)=>{
       const input=await body(req);
       const wallet=String(input.wallet||'').trim();
       if (wallet&&!/^0x[a-fA-F0-9]{40}$/.test(wallet)) throw new Error('デモ用のEVMアドレスを0xから42文字で入力してください。');
-      store.mutate(state=>{state.users.responder.wallet=wallet;});
+      store.mutate(state=>{state.wallets[session.user.id]=wallet;});
       return json(res,200,{wallet});
     }
     const match=p.match(/^\/api\/listings\/([^/]+)\/(answers|payment|start)$/);
@@ -97,23 +100,31 @@ const server=http.createServer(async(req,res)=>{
       const item=store.mutate(state=>{
         const listing=state.listings.find(x=>x.id===match[1]);
         if (!listing) throw new HttpError(404,'デモ見本には投稿できません。');
+        if (!listing.posterId) throw new HttpError(403,'旧デモ掲載は所有者不明のため操作できません。');
         if (match[2]==='start') {
+          if (listing.posterId===session.user.id) throw new HttpError(403,'自分の依頼には回答できません。');
           if (listing.acceptedAnswerId||listing.reward.status==='cancelled') throw new Error('このクエストは開始できません。');
           listing.working=true;
           return listing;
         }
         if (match[2]==='answers') {
+          if (listing.posterId===session.user.id) throw new HttpError(403,'自分の依頼には回答できません。');
           const text=String(input.text||'').trim();
           const evidence=String(input.evidence||'').trim();
           if (text.length<10||text.length>3000) throw new Error('納品内容は10〜3000文字で入力してください。');
           if (evidence&&(!/^https:\/\/(github\.com|gist\.github\.com)\//.test(evidence)||evidence.length>500)) throw new Error('成果物URLはGitHubのHTTPS URLにしてください。');
           if (listing.acceptedAnswerId||listing.reward.status==='cancelled') throw new Error('このクエストは回答を受け付けていません。');
           listing.working=true;
-          listing.answers.push({id:crypto.randomUUID(),text,evidence,createdAt:new Date().toISOString()});
+          listing.answers.push({id:crypto.randomUUID(),authorId:session.user.id,text,evidence,createdAt:new Date().toISOString()});
           return listing;
         }
-        // The requested demo role is not a user identity. #5 will bind these actions to owners.
-        applyPaymentTransition(listing,String(input.action||''),'requester',state.users.responder.wallet,String(input.answerId||''));
+        if (listing.posterId!==session.user.id) throw new HttpError(403,'掲載者本人だけが検収・取消できます。');
+        const action=String(input.action||'');
+        const answerId=String(input.answerId||'');
+        const selected=action==='accept'?listing.answers.find(answer=>answer.id===answerId):null;
+        if (action==='accept'&&!selected?.authorId) throw new HttpError(400,'検収する回答の本人情報を確認できません。');
+        const wallet=selected?state.wallets[selected.authorId]||'':'';
+        applyPaymentTransition(listing,action,'requester',wallet,answerId);
         return listing;
       });
       return json(res,match[2]==='answers'?201:200,item);

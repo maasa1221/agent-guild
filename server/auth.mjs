@@ -118,5 +118,5 @@ export function createAuthService({clientId,clientSecret,origin,fetcher=fetch,no
     }
     return false;
   }
-  return {configured,handle,requireSession};
+  return {configured,handle,requireSession,current};
 }

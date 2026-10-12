@@ -23,13 +23,14 @@ test('migrates JSON once, preserves original and backup, and persists updates af
   const jsonPath=path.join(dir,'listings.json');
   writeFileSync(jsonPath,original);
   const store=openStore(dir);
-  assert.deepEqual(store.read(),legacy);
+  assert.deepEqual(store.read(),{...legacy,wallets:{}});
   assert.equal(readFileSync(jsonPath,'utf8'),original);
   assert.equal(readFileSync(store.backupPath,'utf8'),original);
   store.mutate(state=>{
     state.listings[0].answers.push({id:'answer-2',text:'New answer'});
     state.listings[0].reward.history.push({event:'checked',at:'2026-10-12T01:00:00Z'});
     state.users.responder.wallet='0xdef';
+    state.wallets['123']='0x'+'a'.repeat(40);
   });
   store.close();
   const reopened=openStore(dir);
@@ -37,6 +38,8 @@ test('migrates JSON once, preserves original and backup, and persists updates af
   assert.equal(reopened.read().listings[0].answers[1].id,'answer-2');
   assert.equal(reopened.read().listings[0].reward.history.length,2);
   assert.equal(reopened.read().users.responder.wallet,'0xdef');
+  assert.equal(reopened.read().wallets['123'],'0x'+'a'.repeat(40));
+  assert.equal(reopened.read().wallets['456'],undefined);
   assert.equal(readFileSync(jsonPath,'utf8'),original);
   assert.equal(readdirSync(dir).filter(name=>name.includes('.backup-')).length,1);
   reopened.close();

@@ -4,7 +4,7 @@ import path from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
 
 const VERSION = 1;
-const emptyState = () => ({listings:[],users:{responder:{wallet:''}}});
+const emptyState = () => ({listings:[],users:{responder:{wallet:''}},wallets:{}});
 
 function configure(db) {
   db.exec('PRAGMA foreign_keys = ON');
@@ -37,11 +37,12 @@ function readRows(db) {
     state.listings.push(listing);
   }
   state.users.responder.wallet = db.prepare("SELECT value FROM settings WHERE key = 'responder_wallet'").get()?.value || '';
+  for (const row of db.prepare("SELECT key, value FROM settings WHERE key LIKE 'wallet:%'").all()) state.wallets[row.key.slice(7)]=row.value;
   return state;
 }
 
 function writeRows(db, state) {
-  if (!Array.isArray(state?.listings) || typeof state?.users?.responder?.wallet !== 'string') throw new Error('保存データの形式が正しくありません。');
+  if (!Array.isArray(state?.listings) || typeof state?.users?.responder?.wallet !== 'string' || !state.wallets || typeof state.wallets !== 'object' || Array.isArray(state.wallets)) throw new Error('保存データの形式が正しくありません。');
   db.prepare('DELETE FROM listings').run();
   const listingInsert = db.prepare('INSERT INTO listings (id, payload) VALUES (?, ?)');
   const answerInsert = db.prepare('INSERT INTO answers (id, listing_id, position, payload) VALUES (?, ?, ?, ?)');
@@ -57,6 +58,12 @@ function writeRows(db, state) {
     rewardInsert.run(listing.id, JSON.stringify(reward));
   }
   db.prepare("INSERT INTO settings (key, value) VALUES ('responder_wallet', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(state.users.responder.wallet);
+  db.prepare("DELETE FROM settings WHERE key LIKE 'wallet:%'").run();
+  const walletInsert=db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)');
+  for (const [userId,wallet] of Object.entries(state.wallets)) {
+    if (!/^[1-9][0-9]*$/.test(userId) || typeof wallet !== 'string' || (wallet&&!/^0x[a-fA-F0-9]{40}$/.test(wallet))) throw new Error('利用者の公開アドレスが正しくありません。');
+    walletInsert.run(`wallet:${userId}`,wallet);
+  }
 }
 
 function transact(db, change) {
