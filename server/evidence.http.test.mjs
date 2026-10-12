@@ -24,12 +24,14 @@ test('poster can recheck evidence and current issue, other users cannot',async t
   const port=listener.address().port;
   await new Promise(resolve=>listener.close(resolve));
   const origin=`http://127.0.0.1:${port}`;
-  const child=spawn(process.execPath,['--import',path.join(root,'server','ownership.fixture.mjs'),path.join(root,'server','index.mjs')],{env:{...process.env,PORT:String(port),AGENT_GUILD_ORIGIN:origin,AGENT_GUILD_GITHUB_CLIENT_ID:'fixture-id',AGENT_GUILD_GITHUB_CLIENT_SECRET:'fixture-secret',AGENT_GUILD_FIXTURE_STATE:statePath},stdio:'ignore'});
+  const child=spawn(process.execPath,['--import',path.join(root,'server','ownership.fixture.mjs'),path.join(root,'server','index.mjs')],{env:{...process.env,PORT:String(port),AGENT_GUILD_ORIGIN:origin,AGENT_GUILD_GITHUB_CLIENT_ID:'fixture-id',AGENT_GUILD_GITHUB_CLIENT_SECRET:'fixture-secret',AGENT_GUILD_FIXTURE_STATE:statePath},stdio:['ignore','ignore','pipe']});
+  let stderr='';
+  child.stderr.on('data',chunk=>{stderr+=chunk.toString();});
   t.after(()=>{child.kill();rmSync(root,{recursive:true,force:true});});
   const request=(route,options={})=>fetch(origin+route,{redirect:'manual',...options});
   let ready=false;
-  for(let i=0;i<100;i++){if(child.exitCode!==null)throw new Error('server exited');try{await request('/api/auth/me');ready=true;break;}catch{await sleep(20);}}
-  assert.ok(ready);
+  for(let i=0;i<500;i++){if(child.exitCode!==null)throw new Error(`server exited: ${stderr}`);try{await request('/api/auth/me');ready=true;break;}catch{await sleep(20);}}
+  assert.ok(ready,stderr);
   async function login(code){
     const start=await request('/api/auth/login');
     const state=new URL(start.headers.get('location')).searchParams.get('state');
