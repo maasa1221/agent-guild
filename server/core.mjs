@@ -21,7 +21,7 @@ export function validateSubmission(body) {
   if (approvalEvidence.length > 1000) throw new Error('maintainer承認の根拠は1000文字以内にしてください。');
   return { ...issue, acceptance, aiEvidence, description, amount, approvalEvidence };
 }
-export function applyPaymentTransition(listing, action, actor, wallet) {
+export function applyPaymentTransition(listing, action, actor, wallet, answerId) {
   if (actor !== 'requester') throw new Error('このデモでは依頼者のみ操作できます。');
   const reward = listing.reward;
   if (action === 'cancel') {
@@ -33,7 +33,9 @@ export function applyPaymentTransition(listing, action, actor, wallet) {
   if (reward.status === 'paid' || reward.status === 'cancelled') throw new Error('支払済みまたは取消済みです。二重払いはできません。');
   if (listing.acceptedAnswerId && reward.status !== 'failed') throw new Error('この回答は検収済みです。');
   if (!listing.answers.length) throw new Error('検収する回答がありません。');
-  const answer = listing.answers.find(a => a.id === listing.acceptedAnswerId) || listing.answers[0];
+  const answer = listing.answers.find(a => a.id === answerId);
+  if (!answer) throw new Error('検収する回答を選んでください。');
+  if (listing.acceptedAnswerId && listing.acceptedAnswerId !== answer.id) throw new Error('再試行では前回検収した回答を選んでください。');
   listing.acceptedAnswerId = answer.id;
   if (reward.amount === 0) { reward.history.push({event:'accepted_no_reward',at:new Date().toISOString()}); return; }
   if (!wallet) { reward.status = 'failed'; reward.history.push({event:'failed_missing_wallet',at:new Date().toISOString()}); return; }

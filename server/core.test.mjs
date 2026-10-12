@@ -3,5 +3,20 @@ import assert from 'node:assert/strict';
 import {parseIssueUrl,validateSubmission,applyPaymentTransition} from './core.mjs';
 test('Issue URL only accepts canonical GitHub issue paths',()=>{assert.equal(parseIssueUrl('https://github.com/cli/cli/issues/123').url,'https://github.com/cli/cli/issues/123');for(const url of ['http://github.com/a/b/issues/1','https://github.com.evil.test/a/b/issues/1','https://github.com/a/b/pull/1','https://github.com/a/b/issues/1?x=1','https://github.com/a/b/issues/0']) assert.throws(()=>parseIssueUrl(url));});
 test('submission requires explicit AI declaration and evidence',()=>{const data={issueUrl:'https://github.com/a/b/issues/1',acceptance:'Changes are reviewed and tested',aiEvidence:'Maintainer comment is linked',amount:0};assert.throws(()=>validateSubmission(data));assert.equal(validateSubmission({...data,aiPolicy:'poster_declared'}).amount,0);});
-test('mock payment fails without wallet, retries once, blocks double pay',()=>{const listing={answers:[{id:'a'}],reward:{amount:10,status:'ready',history:[]}};applyPaymentTransition(listing,'accept','requester',null);assert.equal(listing.reward.status,'failed');applyPaymentTransition(listing,'accept','requester','0xabc');assert.equal(listing.reward.status,'paid');assert.throws(()=>applyPaymentTransition(listing,'accept','requester','0xabc'));assert.equal(listing.reward.history.filter(x=>x.event==='simulated_payment').length,1);});
-test('no-reward quest can be accepted without payment',()=>{const listing={answers:[{id:'a'}],reward:{amount:0,status:'none',history:[]}};applyPaymentTransition(listing,'accept','requester',null);assert.equal(listing.acceptedAnswerId,'a');assert.equal(listing.reward.history[0].event,'accepted_no_reward');assert.throws(()=>applyPaymentTransition(listing,'accept','requester',null));});
+test('mock payment fails without wallet, retries once, blocks double pay',()=>{const listing={answers:[{id:'a'}],reward:{amount:10,status:'ready',history:[]}};applyPaymentTransition(listing,'accept','requester',null,'a');assert.equal(listing.reward.status,'failed');applyPaymentTransition(listing,'accept','requester','0xabc','a');assert.equal(listing.reward.status,'paid');assert.throws(()=>applyPaymentTransition(listing,'accept','requester','0xabc'));assert.equal(listing.reward.history.filter(x=>x.event==='simulated_payment').length,1);});
+test('no-reward quest can be accepted without payment',()=>{const listing={answers:[{id:'a'}],reward:{amount:0,status:'none',history:[]}};applyPaymentTransition(listing,'accept','requester',null,'a');assert.equal(listing.acceptedAnswerId,'a');assert.equal(listing.reward.history[0].event,'accepted_no_reward');assert.throws(()=>applyPaymentTransition(listing,'accept','requester',null));});
+
+test('requester selects one answer; invalid choices and changing a failed choice are rejected',()=>{
+  const listing={answers:[{id:'first'},{id:'second'}],reward:{amount:10,status:'ready',history:[]}};
+  assert.throws(()=>applyPaymentTransition(listing,'accept','requester',null),/選んでください/);
+  assert.throws(()=>applyPaymentTransition(listing,'accept','requester',null,'missing'),/選んでください/);
+  assert.equal(listing.acceptedAnswerId,undefined);
+  applyPaymentTransition(listing,'accept','requester',null,'second');
+  assert.equal(listing.acceptedAnswerId,'second');
+  assert.equal(listing.reward.status,'failed');
+  assert.throws(()=>applyPaymentTransition(listing,'accept','requester','0xabc','first'),/前回検収した回答/);
+  assert.equal(listing.reward.status,'failed');
+  applyPaymentTransition(listing,'accept','requester','0xabc','second');
+  assert.equal(listing.reward.status,'paid');
+  assert.equal(listing.reward.history.filter(x=>x.event==='simulated_payment').length,1);
+});
