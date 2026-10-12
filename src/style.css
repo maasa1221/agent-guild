@@ -6,3 +6,6 @@
 @media(max-width:600px){.header-inner{justify-content:flex-start}.header-actions{margin-left:0;flex:0 0 125px}.header select{width:125px;max-width:125px}.brand{flex:0 0 auto}}
 
 .accepted-answer{display:inline-block;margin-left:12px;color:#2e6078;font-size:11px}.review-answer{display:flex;align-items:center;justify-content:center;gap:6px;margin-top:13px;padding:9px 12px;font-size:11px}
+
+.auth-action{border:1px solid #e4e7df;border-radius:6px;background:#fff;color:#254569;padding:9px;font-size:11px;white-space:nowrap;max-width:170px;overflow:hidden;text-overflow:ellipsis;text-decoration:none}.auth-action:hover{background:#f3f6f5}
+@media(max-width:600px){.header-inner{height:auto;min-height:65px;flex-wrap:wrap;padding:9px 0}.header-actions{flex:1 1 100%;justify-content:flex-end}.header select{width:auto;max-width:150px}}

@@ -4,10 +4,12 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {parseIssueUrl,validateSubmission,applyPaymentTransition} from './core.mjs';
 import {openStore} from './storage.mjs';
+import {createAuthService} from './auth.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const store = openStore(path.join(root,'data'));
 const PORT = Number(process.env.PORT || 46077);
+const auth = createAuthService({clientId:process.env.AGENT_GUILD_GITHUB_CLIENT_ID,clientSecret:process.env.AGENT_GUILD_GITHUB_CLIENT_SECRET,origin:process.env.AGENT_GUILD_ORIGIN||`http://127.0.0.1:${PORT}`});
 const demo = [{id:'demo-cli-14647',demo:true,sourceUrl:'https://github.com/cli/cli/issues/14647',repo:'cli/cli',number:14647,title:'gh skill update のヘルプ文を修正する',description:'画面確認用のサンプルクエストです。実際の募集ではありません。',body:'GitHub公開Issueへの参照例。内容と受入条件はこのデモの説明です。',language:'Go',labels:['documentation'],state:'open',acceptance:'ヘルプ文と実際の動作が一致することを確認する。',aiPolicy:'unconfirmed',aiEvidence:'デモのため、maintainerからAI利用許可は確認していません。',approvalEvidence:'',approvalStatus:'unconfirmed',reward:{amount:0,status:'none',history:[]},answers:[],working:false,acceptedAnswerId:null,createdAt:'2026-10-12T00:00:00.000Z'}];
 
 class HttpError extends Error {
@@ -56,6 +58,8 @@ const server=http.createServer(async(req,res)=>{
   try {
     const url=new URL(req.url,'http://localhost');
     const p=url.pathname;
+    if (await auth.handle(req,res,url)) return;
+    if (p.startsWith('/api/')&&req.method!=='GET'&&!auth.requireSession(req,res,{csrf:true})) return;
     if (req.method==='GET'&&p==='/api/listings') {
       const state=store.read();
       return json(res,200,{listings:all(state),wallet:state.users.responder.wallet});
@@ -94,13 +98,11 @@ const server=http.createServer(async(req,res)=>{
         const listing=state.listings.find(x=>x.id===match[1]);
         if (!listing) throw new HttpError(404,'デモ見本には投稿できません。');
         if (match[2]==='start') {
-          if (input.actor!=='responder') throw new Error('回答者としてデモログインしてください。');
           if (listing.acceptedAnswerId||listing.reward.status==='cancelled') throw new Error('このクエストは開始できません。');
           listing.working=true;
           return listing;
         }
         if (match[2]==='answers') {
-          if (input.actor!=='responder') throw new Error('回答者としてデモログインしてください。');
           const text=String(input.text||'').trim();
           const evidence=String(input.evidence||'').trim();
           if (text.length<10||text.length>3000) throw new Error('納品内容は10〜3000文字で入力してください。');
@@ -110,7 +112,8 @@ const server=http.createServer(async(req,res)=>{
           listing.answers.push({id:crypto.randomUUID(),text,evidence,createdAt:new Date().toISOString()});
           return listing;
         }
-        applyPaymentTransition(listing,String(input.action||''),String(input.actor||''),state.users.responder.wallet,String(input.answerId||''));
+        // The requested demo role is not a user identity. #5 will bind these actions to owners.
+        applyPaymentTransition(listing,String(input.action||''),'requester',state.users.responder.wallet,String(input.answerId||''));
         return listing;
       });
       return json(res,match[2]==='answers'?201:200,item);
