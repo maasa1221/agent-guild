@@ -5,6 +5,7 @@ import {fileURLToPath} from 'node:url';
 import {parseIssueUrl,validateSubmission,applyPaymentTransition} from './core.mjs';
 import {openStore} from './storage.mjs';
 import {createAuthService} from './auth.mjs';
+import {inspectEvidence} from './evidence.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const store = openStore(path.join(root,'data'));
@@ -67,9 +68,34 @@ const server=http.createServer(async(req,res)=>{
       const userId=auth.current(req)?.user.id;
       return json(res,200,{listings:all(state),wallet:userId?state.wallets[userId]||'':''});
     }
+    const sourceMatch=p.match(/^\/api\/listings\/([^/]+)\/source-status$/);
+    if (req.method==='GET'&&sourceMatch) {
+      const item=all(store.read()).find(x=>x.id===sourceMatch[1]);
+      if (!item) return json(res,404,{error:'見つかりません。'});
+      const current=await githubIssue(parseIssueUrl(item.sourceUrl));
+      return json(res,200,{snapshot:{title:item.title,state:item.state,updatedAt:item.githubUpdatedAt||null},current:{title:current.title,state:current.state,updatedAt:current.githubUpdatedAt},sourceUrl:item.sourceUrl});
+    }
     if (req.method==='GET'&&p.startsWith('/api/listings/')) {
       const item=all(store.read()).find(x=>x.id===p.split('/')[3]);
       return json(res,item?200:404,item||{error:'見つかりません。'});
+    }
+    const evidenceMatch=p.match(/^\/api\/listings\/([^/]+)\/evidence-check$/);
+    if (req.method==='POST'&&evidenceMatch) {
+      const before=store.read().listings.find(x=>x.id===evidenceMatch[1]);
+      if (!before) return json(res,404,{error:'見つかりません。'});
+      if (!before.posterId || before.posterId!==session.user.id) return json(res,403,{error:'掲載者本人だけが証跡を確認できます。'});
+      const checked=await inspectEvidence(before);
+      const item=store.mutate(state=>{
+        const listing=state.listings.find(x=>x.id===evidenceMatch[1]);
+        if (!listing || listing.posterId!==session.user.id || (listing.approvalEvidence!==before.approvalEvidence || listing.approvalStatus!==before.approvalStatus || listing.evidenceRevision!==before.evidenceRevision || listing.evidenceCheckedAt!==before.evidenceCheckedAt)) throw new HttpError(409,'掲載状態が変わりました。');
+        listing.approvalStatus=checked.status;
+        listing.evidenceCheckedBy=session.user.id;
+        listing.evidenceCheckedAt=new Date().toISOString();
+        listing.evidenceCheckReason=checked.reason||'';
+        if (checked.revision) listing.evidenceRevision=checked.revision;
+        return listing;
+      });
+      return json(res,200,item);
     }
     if (req.method==='POST'&&p==='/api/preview') {
       const input=await body(req);

@@ -1,0 +1,70 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {spawn} from 'node:child_process';
+import {cpSync,existsSync,mkdtempSync,mkdirSync,rmSync,writeFileSync} from 'node:fs';
+import net from 'node:net';
+import os from 'node:os';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+
+const source=path.dirname(fileURLToPath(import.meta.url));
+const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+
+test('poster can recheck evidence and current issue, other users cannot',async t=>{
+  const root=mkdtempSync(path.join(os.tmpdir(),'agent-guild-evidence-'));
+  cpSync(source,path.join(root,'server'),{recursive:true});
+  mkdirSync(path.join(root,'data'));
+  const approvalEvidence='https://github.com/owner/repo/issues/1#issuecomment-99';
+  const listing={id:'quest',posterId:'123',sourceUrl:'https://github.com/owner/repo/issues/1',repo:'owner/repo',number:1,title:'Fixture issue',state:'open',githubUpdatedAt:'2026-10-12T00:00:00Z',approvalEvidence,approvalStatus:'poster_claimed',answers:[],reward:{amount:0,status:'none',history:[]}};
+  writeFileSync(path.join(root,'data','listings.json'),JSON.stringify({listings:[listing],users:{responder:{wallet:''}}}));
+  const statePath=path.join(root,'fixture-state');
+  writeFileSync(statePath,'valid');
+  const listener=net.createServer();
+  await new Promise(resolve=>listener.listen(0,'127.0.0.1',resolve));
+  const port=listener.address().port;
+  await new Promise(resolve=>listener.close(resolve));
+  const origin=`http://127.0.0.1:${port}`;
+  const child=spawn(process.execPath,['--import',path.join(root,'server','ownership.fixture.mjs'),path.join(root,'server','index.mjs')],{env:{...process.env,PORT:String(port),AGENT_GUILD_ORIGIN:origin,AGENT_GUILD_GITHUB_CLIENT_ID:'fixture-id',AGENT_GUILD_GITHUB_CLIENT_SECRET:'fixture-secret',AGENT_GUILD_FIXTURE_STATE:statePath},stdio:'ignore'});
+  t.after(()=>{child.kill();rmSync(root,{recursive:true,force:true});});
+  const request=(route,options={})=>fetch(origin+route,{redirect:'manual',...options});
+  let ready=false;
+  for(let i=0;i<100;i++){if(child.exitCode!==null)throw new Error('server exited');try{await request('/api/auth/me');ready=true;break;}catch{await sleep(20);}}
+  assert.ok(ready);
+  async function login(code){
+    const start=await request('/api/auth/login');
+    const state=new URL(start.headers.get('location')).searchParams.get('state');
+    const oauthCookie=start.headers.getSetCookie()[0].split(';')[0];
+    const callback=await request(`/api/auth/callback?code=${code}&state=${state}`,{headers:{Cookie:oauthCookie}});
+    assert.equal(callback.status,302);
+    const cookie=callback.headers.getSetCookie().find(x=>x.startsWith('ag_session=')).split(';')[0];
+    const me=await (await request('/api/auth/me',{headers:{Cookie:cookie}})).json();
+    return {cookie,csrf:me.csrfToken};
+  }
+  const alice=await login('alice'),bob=await login('bob');
+  const check=user=>request('/api/listings/quest/evidence-check',{method:'POST',headers:{Cookie:user.cookie,'X-CSRF-Token':user.csrf,Origin:origin}});
+  const detail=async()=> (await (await request('/api/listings/quest')).json());
+  assert.equal((await check(bob)).status,403);
+  assert.equal((await detail()).approvalStatus,'poster_claimed');
+  assert.equal((await check(alice)).status,200);
+  assert.equal((await detail()).approvalStatus,'evidence_checked');
+  assert.equal((await detail()).evidenceCheckedBy,'123');
+  writeFileSync(statePath,'changed');
+  assert.equal((await check(alice)).status,200);
+  assert.equal((await detail()).approvalStatus,'verification_unavailable');
+  writeFileSync(statePath,'missing');
+  assert.equal((await check(alice)).status,200);
+  assert.equal((await detail()).approvalStatus,'verification_unavailable');
+  writeFileSync(statePath,'slow_valid');
+  const delayed=check(alice);
+  for(let i=0;i<100&&!existsSync(statePath+'.started');i++) await sleep(5);
+  assert.ok(existsSync(statePath+'.started'));
+  writeFileSync(statePath,'changed');
+  assert.equal((await check(alice)).status,200);
+  assert.equal((await delayed).status,409);
+  assert.equal((await detail()).approvalStatus,'verification_unavailable');
+  writeFileSync(statePath,'source_changed');
+  const sourceStatus=await (await request('/api/listings/quest/source-status')).json();
+  assert.equal(sourceStatus.snapshot.state,'open');
+  assert.equal(sourceStatus.current.state,'closed');
+  assert.notEqual(sourceStatus.snapshot.updatedAt,sourceStatus.current.updatedAt);
+});
