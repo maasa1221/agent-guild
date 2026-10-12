@@ -3,29 +3,131 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {parseIssueUrl,validateSubmission,applyPaymentTransition} from './core.mjs';
+import {openStore} from './storage.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
-const file = path.join(root,'data','listings.json');
+const store = openStore(path.join(root,'data'));
 const PORT = Number(process.env.PORT || 46077);
 const demo = [{id:'demo-cli-14647',demo:true,sourceUrl:'https://github.com/cli/cli/issues/14647',repo:'cli/cli',number:14647,title:'gh skill update のヘルプ文を修正する',description:'画面確認用のサンプルクエストです。実際の募集ではありません。',body:'GitHub公開Issueへの参照例。内容と受入条件はこのデモの説明です。',language:'Go',labels:['documentation'],state:'open',acceptance:'ヘルプ文と実際の動作が一致することを確認する。',aiPolicy:'unconfirmed',aiEvidence:'デモのため、maintainerからAI利用許可は確認していません。',approvalEvidence:'',approvalStatus:'unconfirmed',reward:{amount:0,status:'none',history:[]},answers:[],working:false,acceptedAnswerId:null,createdAt:'2026-10-12T00:00:00.000Z'}];
-let db = {listings:[],users:{responder:{wallet:''}}};
-try {db=JSON.parse(await fs.readFile(file,'utf8'));} catch (e) {if(e.code!=='ENOENT') throw e;}
-let writeQueue=Promise.resolve();
-function save(){writeQueue=writeQueue.then(async()=>{await fs.mkdir(path.dirname(file),{recursive:true});await fs.writeFile(file,JSON.stringify(db,null,2));});return writeQueue;}
-function json(res,status,value){res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(value));}
-async function body(req){let chunks=[];let size=0;for await(const chunk of req){size+=chunk.length;if(size>30000) throw new Error('入力が大きすぎます。');chunks.push(chunk);}try{return JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{throw new Error('JSON形式が正しくありません。');}}
-async function githubIssue(parsed){const headers={'Accept':'application/vnd.github+json','User-Agent':'issue-no-wa-local-demo'};const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),10000);try{const issueRes=await fetch(`https://api.github.com/repos/${encodeURIComponent(parsed.owner)}/${encodeURIComponent(parsed.repo)}/issues/${parsed.number}`,{headers,signal:controller.signal});if(!issueRes.ok)throw new Error(issueRes.status===404?'Issueが見つかりません。':`GitHub情報を取得できませんでした (${issueRes.status})。`);const issue=await issueRes.json();if(issue.pull_request)throw new Error('Pull Requestは掲載できません。Issue URLを指定してください。');const repoRes=await fetch(`https://api.github.com/repos/${encodeURIComponent(parsed.owner)}/${encodeURIComponent(parsed.repo)}`,{headers,signal:controller.signal});if(!repoRes.ok)throw new Error('リポジトリ情報を取得できませんでした。');const repo=await repoRes.json();return {sourceUrl:issue.html_url,repo:repo.full_name,number:issue.number,title:issue.title,body:issue.body||'',language:repo.language||'不明',labels:issue.labels.map(x=>x.name),state:issue.state,githubUpdatedAt:issue.updated_at};}catch(e){if(e.name==='AbortError')throw new Error('GitHubへの接続がタイムアウトしました。');throw e;}finally{clearTimeout(timeout);}}
-function all(){return [...db.listings,...demo];}
-const server=http.createServer(async(req,res)=>{try{const url=new URL(req.url,'http://localhost');const p=url.pathname;
-  if(req.method==='GET'&&p==='/api/listings')return json(res,200,{listings:all(),wallet:db.users.responder.wallet});
-  if(req.method==='GET'&&p.startsWith('/api/listings/')){const item=all().find(x=>x.id===p.split('/')[3]);return json(res,item?200:404,item||{error:'見つかりません。'});}
-  if(req.method==='POST'&&p==='/api/preview'){const input=await body(req);const parsed=parseIssueUrl(String(input.issueUrl||''));return json(res,200,await githubIssue(parsed));}
-  if(req.method==='POST'&&p==='/api/listings'){const input=validateSubmission(await body(req));if(all().some(x=>x.sourceUrl.toLowerCase()===input.url.toLowerCase()))return json(res,409,{error:'このIssue URLは既に掲載されています。'});const gh=await githubIssue(input);if(all().some(x=>x.sourceUrl.toLowerCase()===gh.sourceUrl.toLowerCase()))return json(res,409,{error:'このIssue URLは既に掲載されています。'});const item={id:crypto.randomUUID(),demo:false,...gh,description:input.description,acceptance:input.acceptance,aiPolicy:'poster_declared',aiEvidence:input.aiEvidence,approvalEvidence:input.approvalEvidence,approvalStatus:input.approvalEvidence?'poster_claimed':'unconfirmed',reward:{amount:input.amount,status:input.amount?'ready':'none',history:[]},answers:[],working:false,acceptedAnswerId:null,createdAt:new Date().toISOString()};db.listings.unshift(item);await save();return json(res,201,item);}
-  if(req.method==='POST'&&p==='/api/wallet'){const input=await body(req);const wallet=String(input.wallet||'').trim();if(wallet&&!/^0x[a-fA-F0-9]{40}$/.test(wallet))throw new Error('デモ用のEVMアドレスを0xから42文字で入力してください。');db.users.responder.wallet=wallet;await save();return json(res,200,{wallet});}
-  const match=p.match(/^\/api\/listings\/([^/]+)\/(answers|payment|start)$/);
-  if(req.method==='POST'&&match){const item=db.listings.find(x=>x.id===match[1]);if(!item)return json(res,404,{error:'デモ見本には投稿できません。'});const input=await body(req);if(match[2]==='start'){if(input.actor!=='responder')throw new Error('回答者としてデモログインしてください。');if(item.acceptedAnswerId||item.reward.status==='cancelled')throw new Error('このクエストは開始できません。');item.working=true;await save();return json(res,200,item);}if(match[2]==='answers'){if(input.actor!=='responder')throw new Error('回答者としてデモログインしてください。');const text=String(input.text||'').trim();const evidence=String(input.evidence||'').trim();if(text.length<10||text.length>3000)throw new Error('納品内容は10〜3000文字で入力してください。');if(evidence&&(!/^https:\/\/(github\.com|gist\.github\.com)\//.test(evidence)||evidence.length>500))throw new Error('成果物URLはGitHubのHTTPS URLにしてください。');if(item.acceptedAnswerId||item.reward.status==='cancelled')throw new Error('このクエストは回答を受け付けていません。');item.working=true;item.answers.push({id:crypto.randomUUID(),text,evidence,createdAt:new Date().toISOString()});await save();return json(res,201,item);}
-  applyPaymentTransition(item,String(input.action||''),String(input.actor||''),db.users.responder.wallet,String(input.answerId||''));await save();return json(res,200,item);}
-  if(p.startsWith('/api/'))return json(res,404,{error:'APIが見つかりません。'});
-  const dist=path.join(root,'dist');let target=path.join(dist,p==='/'?'index.html':p);if(!target.startsWith(dist+path.sep))return json(res,403,{error:'Forbidden'});let data;try{data=await fs.readFile(target);}catch{target=path.join(dist,'index.html');data=await fs.readFile(target);}const ext=path.extname(target);res.writeHead(200,{'Content-Type':({'.html':'text/html; charset=utf-8','.js':'text/javascript','.css':'text/css','.svg':'image/svg+xml'})[ext]||'application/octet-stream'});res.end(data);
-}catch(e){json(res,400,{error:e.message||'処理に失敗しました。'});}});
+
+class HttpError extends Error {
+  constructor(status,message) { super(message); this.status = status; }
+}
+
+function json(res,status,value) {
+  res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  res.end(JSON.stringify(value));
+}
+
+async function body(req) {
+  const chunks=[];
+  let size=0;
+  for await (const chunk of req) {
+    size+=chunk.length;
+    if (size>30000) throw new Error('入力が大きすぎます。');
+    chunks.push(chunk);
+  }
+  try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { throw new Error('JSON形式が正しくありません。'); }
+}
+
+async function githubIssue(parsed) {
+  const headers={'Accept':'application/vnd.github+json','User-Agent':'issue-no-wa-local-demo'};
+  const controller=new AbortController();
+  const timeout=setTimeout(()=>controller.abort(),10000);
+  try {
+    const issueRes=await fetch(`https://api.github.com/repos/${encodeURIComponent(parsed.owner)}/${encodeURIComponent(parsed.repo)}/issues/${parsed.number}`,{headers,signal:controller.signal});
+    if (!issueRes.ok) throw new Error(issueRes.status===404?'Issueが見つかりません。':`GitHub情報を取得できませんでした (${issueRes.status})。`);
+    const issue=await issueRes.json();
+    if (issue.pull_request) throw new Error('Pull Requestは掲載できません。Issue URLを指定してください。');
+    const repoRes=await fetch(`https://api.github.com/repos/${encodeURIComponent(parsed.owner)}/${encodeURIComponent(parsed.repo)}`,{headers,signal:controller.signal});
+    if (!repoRes.ok) throw new Error('リポジトリ情報を取得できませんでした。');
+    const repo=await repoRes.json();
+    return {sourceUrl:issue.html_url,repo:repo.full_name,number:issue.number,title:issue.title,body:issue.body||'',language:repo.language||'不明',labels:issue.labels.map(x=>x.name),state:issue.state,githubUpdatedAt:issue.updated_at};
+  } catch (e) {
+    if (e.name==='AbortError') throw new Error('GitHubへの接続がタイムアウトしました。');
+    throw e;
+  } finally { clearTimeout(timeout); }
+}
+
+function all(state) { return [...state.listings,...demo]; }
+
+const server=http.createServer(async(req,res)=>{
+  try {
+    const url=new URL(req.url,'http://localhost');
+    const p=url.pathname;
+    if (req.method==='GET'&&p==='/api/listings') {
+      const state=store.read();
+      return json(res,200,{listings:all(state),wallet:state.users.responder.wallet});
+    }
+    if (req.method==='GET'&&p.startsWith('/api/listings/')) {
+      const item=all(store.read()).find(x=>x.id===p.split('/')[3]);
+      return json(res,item?200:404,item||{error:'見つかりません。'});
+    }
+    if (req.method==='POST'&&p==='/api/preview') {
+      const input=await body(req);
+      return json(res,200,await githubIssue(parseIssueUrl(String(input.issueUrl||''))));
+    }
+    if (req.method==='POST'&&p==='/api/listings') {
+      const input=validateSubmission(await body(req));
+      if (all(store.read()).some(x=>x.sourceUrl.toLowerCase()===input.url.toLowerCase())) return json(res,409,{error:'このIssue URLは既に掲載されています。'});
+      const gh=await githubIssue(input);
+      const item=store.mutate(state=>{
+        if (all(state).some(x=>x.sourceUrl.toLowerCase()===gh.sourceUrl.toLowerCase())) throw new HttpError(409,'このIssue URLは既に掲載されています。');
+        const listing={id:crypto.randomUUID(),demo:false,...gh,description:input.description,acceptance:input.acceptance,aiPolicy:'poster_declared',aiEvidence:input.aiEvidence,approvalEvidence:input.approvalEvidence,approvalStatus:input.approvalEvidence?'poster_claimed':'unconfirmed',reward:{amount:input.amount,status:input.amount?'ready':'none',history:[]},answers:[],working:false,acceptedAnswerId:null,createdAt:new Date().toISOString()};
+        state.listings.unshift(listing);
+        return listing;
+      });
+      return json(res,201,item);
+    }
+    if (req.method==='POST'&&p==='/api/wallet') {
+      const input=await body(req);
+      const wallet=String(input.wallet||'').trim();
+      if (wallet&&!/^0x[a-fA-F0-9]{40}$/.test(wallet)) throw new Error('デモ用のEVMアドレスを0xから42文字で入力してください。');
+      store.mutate(state=>{state.users.responder.wallet=wallet;});
+      return json(res,200,{wallet});
+    }
+    const match=p.match(/^\/api\/listings\/([^/]+)\/(answers|payment|start)$/);
+    if (req.method==='POST'&&match) {
+      const input=await body(req);
+      const item=store.mutate(state=>{
+        const listing=state.listings.find(x=>x.id===match[1]);
+        if (!listing) throw new HttpError(404,'デモ見本には投稿できません。');
+        if (match[2]==='start') {
+          if (input.actor!=='responder') throw new Error('回答者としてデモログインしてください。');
+          if (listing.acceptedAnswerId||listing.reward.status==='cancelled') throw new Error('このクエストは開始できません。');
+          listing.working=true;
+          return listing;
+        }
+        if (match[2]==='answers') {
+          if (input.actor!=='responder') throw new Error('回答者としてデモログインしてください。');
+          const text=String(input.text||'').trim();
+          const evidence=String(input.evidence||'').trim();
+          if (text.length<10||text.length>3000) throw new Error('納品内容は10〜3000文字で入力してください。');
+          if (evidence&&(!/^https:\/\/(github\.com|gist\.github\.com)\//.test(evidence)||evidence.length>500)) throw new Error('成果物URLはGitHubのHTTPS URLにしてください。');
+          if (listing.acceptedAnswerId||listing.reward.status==='cancelled') throw new Error('このクエストは回答を受け付けていません。');
+          listing.working=true;
+          listing.answers.push({id:crypto.randomUUID(),text,evidence,createdAt:new Date().toISOString()});
+          return listing;
+        }
+        applyPaymentTransition(listing,String(input.action||''),String(input.actor||''),state.users.responder.wallet,String(input.answerId||''));
+        return listing;
+      });
+      return json(res,match[2]==='answers'?201:200,item);
+    }
+    if (p.startsWith('/api/')) return json(res,404,{error:'APIが見つかりません。'});
+    const dist=path.join(root,'dist');
+    let target=path.join(dist,p==='/'?'index.html':p);
+    if (!target.startsWith(dist+path.sep)) return json(res,403,{error:'Forbidden'});
+    let data;
+    try {data=await fs.readFile(target);}
+    catch {target=path.join(dist,'index.html');data=await fs.readFile(target);}
+    const ext=path.extname(target);
+    res.writeHead(200,{'Content-Type':({'.html':'text/html; charset=utf-8','.js':'text/javascript','.css':'text/css','.svg':'image/svg+xml'})[ext]||'application/octet-stream'});
+    res.end(data);
+  } catch (e) {
+    json(res,e.status||400,{error:e.message||'処理に失敗しました。'});
+  }
+});
+
 server.listen(PORT,'127.0.0.1',()=>console.log(`Agent Guild: http://127.0.0.1:${PORT}`));
