@@ -65,7 +65,10 @@ test('rate limits posts and persists report, hide and restore with admin only',a
   const hiddenList=await (await request('/api/listings')).json();
   assert.equal(hiddenList.listings.some(x=>x.id===id),false);
   assert.equal((await request(`/api/listings/${id}`)).status,404);
+  assert.equal((await request(`/api/listings/${id}/source-status`)).status,404);
   assert.equal((await request(`/api/listings/${id}`,{headers:{Cookie:admin.cookie}})).status,200);
+  assert.equal((await request(`/api/listings/${id}/source-status`,{headers:{Cookie:admin.cookie}})).status,200);
+  assert.equal((await post(`/api/listings/${id}/evidence-check`,alice,{})).status,403);
   assert.equal((await post(answerRoute,bob,{text:'Cannot answer hidden quest'})).status,403);
   assert.equal((await post(`/api/moderation/${id}`,admin,{action:'restore',reason:'False positive, restore'})).status,200);
   assert.equal((await (await request('/api/listings')).json()).listings.some(x=>x.id===id),true);
