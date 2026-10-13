@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
-import {cpSync,existsSync,mkdtempSync,mkdirSync,rmSync,writeFileSync} from 'node:fs';
+import {cpSync,existsSync,mkdtempSync,mkdirSync,readFileSync,rmSync,writeFileSync} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {openStore} from './storage.mjs';
@@ -20,12 +20,13 @@ function verifyRestoredCopy(dir,expectedState,expectedAudit) {
   } finally { store.close(); }
 }
 
-test('closed synthetic SQLite store restores all records and audit history; missing or corrupt copies fail verification',t=>{
+test('closed synthetic SQLite store restores twice from one backup; missing or corrupt copies fail verification',t=>{
   const root=mkdtempSync(path.join(os.tmpdir(),'agent-guild-backup-fixture-'));
   t.after(()=>rmSync(root,{recursive:true,force:true}));
   const source=path.join(root,'source');
   const backup=path.join(root,'backup');
   const restored=path.join(root,'restored');
+  const rollback=path.join(root,'rollback');
   const missing=path.join(root,'missing');
   const corrupt=path.join(root,'corrupt');
 
@@ -43,12 +44,19 @@ test('closed synthetic SQLite store restores all records and audit history; miss
 
   // 停止後に data/ 全体をコピーし、別の場所で起動し直す。
   cpSync(source,backup,{recursive:true});
+  const backupBytes=readFileSync(path.join(backup,'listings.sqlite'));
   cpSync(backup,restored,{recursive:true});
   verifyRestoredCopy(restored,expectedState,expectedAudit);
   const reopened=openStore(restored);
   assert.equal(reopened.read().listings[0].acceptedAnswerId,'answer-2');
   assert.equal(reopened.read().listings[0].answers.length,2);
+  reopened.mutate(state=>{state.listings[0].title='Changed only in the restored copy';});
   reopened.close();
+
+  // 復元先が変更されてもバックアップから別の隔離先へ元の状態を復元できる。
+  cpSync(backup,rollback,{recursive:true});
+  verifyRestoredCopy(rollback,expectedState,expectedAudit);
+  assert.deepEqual(readFileSync(path.join(backup,'listings.sqlite')),backupBytes);
 
   mkdirSync(missing);
   assert.throws(()=>verifyRestoredCopy(missing,expectedState,expectedAudit),/SQLite DB/);
