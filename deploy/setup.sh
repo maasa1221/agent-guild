@@ -10,10 +10,19 @@ conf=/etc/agent-guild
 for f in app.env caddy.env; do
   [ -f "$conf/$f" ] || { echo "$conf/$f がありません。deploy/$f.example を元に作成してください。"; exit 1; }
 done
-grep -q '^AGENT_GUILD_GITHUB_ORG=[A-Za-z0-9]' "$conf/app.env" || { echo 'app.env に AGENT_GUILD_GITHUB_ORG を設定してください。'; exit 1; }
-grep -q '^AGENT_GUILD_ALLOWED_IPS=[0-9a-fA-F]' "$conf/caddy.env" || { echo 'caddy.env に AGENT_GUILD_ALLOWED_IPS を設定してください。'; exit 1; }
+value() { sed -n "s/^$2=//p" "$conf/$1" | tail -n 1; }
+for pair in app.env:AGENT_GUILD_ORIGIN app.env:AGENT_GUILD_GITHUB_CLIENT_ID app.env:AGENT_GUILD_GITHUB_CLIENT_SECRET app.env:AGENT_GUILD_GITHUB_ORG caddy.env:AGENT_GUILD_DOMAIN caddy.env:AGENT_GUILD_ALLOWED_IPS; do
+  v=$(value "${pair%%:*}" "${pair#*:}")
+  case "$v" in ''|*example*|your-org|203.0.113.*) echo "${pair%%:*} の ${pair#*:} を実際の値にしてください。"; exit 1;; esac
+done
+[ "$(value app.env AGENT_GUILD_ORIGIN)" = "https://$(value caddy.env AGENT_GUILD_DOMAIN)" ] || { echo 'AGENT_GUILD_ORIGIN は https://<AGENT_GUILD_DOMAIN> にしてください。'; exit 1; }
 
 export DEBIAN_FRONTEND=noninteractive
+# 1 GB の無料 VM ではビルドがメモリ不足になり得るため、swap がなければ 2 GB 作る。
+if [ "$(awk '/MemTotal/{print $2}' /proc/meminfo)" -lt 2000000 ] && [ -z "$(swapon --noheadings)" ]; then
+  fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+  grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+fi
 if ! node -v 2>/dev/null | grep -q '^v2[2-9]\.'; then
   curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
   apt-get install -y nodejs
@@ -33,7 +42,6 @@ npm run build
 install -d -o agentguild -g agentguild -m 700 "$app/data"
 chown root:root "$conf"/*.env
 chmod 600 "$conf"/*.env
-chmod 755 "$app/deploy/backup.sh"
 
 install -m 644 deploy/agent-guild.service deploy/agent-guild-backup.service deploy/agent-guild-backup.timer /etc/systemd/system/
 install -m 644 deploy/Caddyfile /etc/caddy/Caddyfile

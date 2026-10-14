@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
-import {cpSync,mkdtempSync,rmSync} from 'node:fs';
+import {cpSync,mkdirSync,mkdtempSync,rmSync,writeFileSync} from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -10,9 +10,13 @@ import {fileURLToPath} from 'node:url';
 const source=path.dirname(fileURLToPath(import.meta.url));
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 
-async function startServer(t,env={}) {
+async function startServer(t,env={},legacyListings=null) {
   const root=mkdtempSync(path.join(os.tmpdir(),'agent-guild-free-'));
   cpSync(source,path.join(root,'server'),{recursive:true});
+  if (legacyListings) {
+    mkdirSync(path.join(root,'data'));
+    writeFileSync(path.join(root,'data','listings.json'),JSON.stringify({listings:legacyListings,users:{responder:{wallet:''}}}));
+  }
   const listener=net.createServer();
   await new Promise(resolve=>listener.listen(0,'127.0.0.1',resolve));
   const port=listener.address().port;
@@ -62,6 +66,16 @@ test('free edition is the default: no reward amounts, no wallets, acceptance sti
   assert.equal(accepted.acceptedAnswerId,answerId);
   assert.deepEqual(accepted.reward.history.map(h=>h.event),['accepted_no_reward']);
   assert.equal((await (await request('/api/listings',{headers:{Cookie:bob.cookie}})).json()).wallet,'');
+});
+
+test('free edition refuses accept and cancel on a reward listing carried over from a demo database',async t=>{
+  const legacy={id:'paid-quest',posterId:'123',sourceUrl:'https://github.com/owner/repo/issues/1',repo:'owner/repo',number:1,title:'Fixture issue',state:'open',acceptance:'Legacy acceptance',aiPolicy:'poster_declared',aiEvidence:'Legacy evidence',approvalStatus:'unconfirmed',working:true,acceptedAnswerId:null,createdAt:'2026-10-12T00:00:00.000Z',answers:[{id:'a1',authorId:'456',text:'Legacy answer',createdAt:'2026-10-12T00:00:00.000Z'}],reward:{amount:5,status:'ready',history:[]}};
+  const {request,login,post}=await startServer(t,{},[legacy]);
+  const alice=await login('alice');
+  for (const value of [{action:'accept',answerId:'a1'},{action:'cancel'}]) assert.equal((await post('/api/listings/paid-quest/payment',alice,value)).status,409,value.action);
+  const item=await (await request('/api/listings/paid-quest')).json();
+  assert.equal(item.reward.status,'ready');
+  assert.equal(item.acceptedAnswerId,null);
 });
 
 test('organization restriction requires an active member login for every page and API',async t=>{

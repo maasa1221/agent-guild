@@ -23,7 +23,7 @@ SQLite をディスクに残す必要があるため、永続ディスクのな�
 
 | 候補 | 費用 | 向き・注意 |
 | --- | --- | --- |
-| **Oracle Cloud Always Free（推奨）** | 無料 | 東京リージョンを選べる。AMD の VM.Standard.E2.1.Micro（1 GB）で十分動く。登録にクレジットカードが必要。Ubuntu イメージは OS の iptables でも 80/443 を閉じているので、下の手順で開ける。 |
+| **Oracle Cloud Always Free（推奨）** | 無料 | 東京リージョンを選べる。AMD の VM.Standard.E2.1.Micro（1 GB）で動く。ビルド時のメモリ不足に備えて、`setup.sh` が swap を作る。登録にクレジットカードが必要。Ubuntu イメージは OS の iptables でも 80/443 を閉じているので、下の手順で開ける。 |
 | GCP Always Free e2-micro | 無料 | 米国の対象リージョン（us-west1 など）に限られる。日本からは遅延が少し増える。標準永続ディスク 30 GB まで無料。 |
 | 社内の常時稼働 PC・サーバー | 無料 | 同じ手順で動く。社内 LAN だけで使う場合、HTTPS 証明書の取得方法は別途決める。 |
 
@@ -72,8 +72,11 @@ sudo nano /etc/agent-guild/caddy.env   # ドメイン、社内 IP（CIDR、空�
 sudo bash /opt/agent-guild/deploy/setup.sh
 ```
 
-`setup.sh` は次を行います。
+本番の `data/` は空の状態から始めてください。ローカルデモの DB を持ち込むと、報奨金付きの掲載は無料版では検収・取消できません。
 
+`setup.sh` は、設定値が例のまま・空でないことを確認してから、次を行います。
+
+- メモリが 2 GB 未満で swap がなければ、ビルド用に 2 GB の swap を作る。
 - Node.js 22 と Caddy を入れる。
 - 専用ユーザー `agentguild` を作る。
 - `npm ci` とビルドを行う。
@@ -98,12 +101,14 @@ sudo bash /opt/agent-guild/deploy/setup.sh
 
 - **ログ**: `journalctl -u agent-guild -u caddy`
 - **バックアップ**:
-  - 毎日 4:00（VM のタイムゾーン）に数秒サービスを止め、`data/` を `/var/backups/agent-guild/<日時>` にコピーする。直近 14 世代を残す。
+  - 毎日 4:00（VM のタイムゾーン）に数秒サービスを止め、`data/` を `/var/backups/agent-guild/<日時>` にコピーする。直近 14 世代を残す。セッションはメモリ上にあるので、このとき全員ログアウトされる。意図して停止中のサービスは、バックアップ後も起動しない。
   - 手動で取るときは `sudo systemctl start agent-guild-backup` を実行する。
   - バックアップは同じ VM のディスク上にあるので、VM ごと失うと戻せない。重要になったら別の保管先へのコピーを足す。
 - **復元**: [復旧手順案](offline-recovery.md) のとおり、サービスを止め、バックアップを隔離先で確認してから `data/` を差し替える。
 - **保存データ**: 何が保存されているかは [運用準備メモの保存データの棚卸し](decision-readiness.md) と `server/data-inventory.mjs` を参照する。
 - **停止**: `sudo systemctl stop agent-guild caddy` で全停止する。特定の掲載だけ止めたいときは、管理者が hide する。
+
+組織メンバーかどうかはログイン時にだけ確認します。組織から外れた人も、既存のセッションは最長 8 時間（または次の再起動・毎朝のバックアップ）まで有効です。すぐに止めたいときは `sudo systemctl restart agent-guild` で全セッションを失効させてください。
 
 ## 範囲外
 

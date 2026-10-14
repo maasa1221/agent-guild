@@ -225,6 +225,7 @@ const server=http.createServer(async(req,res)=>{
           return listing;
         }
         if (listing.posterId!==session.user.id) throw new HttpError(403,'掲載者本人だけが検収・取消できます。');
+        if (!rewardsEnabled&&listing.reward.amount) throw new HttpError(409,'無料版では報奨金付きの旧掲載を検収・取消できません。');
         const answerId=String(input.answerId||'');
         const selected=action==='accept'?listing.answers.find(answer=>answer.id===answerId):null;
         if (action==='accept'&&!selected?.authorId) throw new HttpError(400,'検収する回答の本人情報を確認できません。');
