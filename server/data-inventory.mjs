@@ -42,11 +42,11 @@ export const DATA_INVENTORY=Object.freeze([
   entry('audit','audit.operation','system'),entry('audit','audit.at','system'),entry('audit','audit.result','system'),
 ]);
 
-const TABLES={listings:['id'],answers:['id','listing_id','position'],rewards:['listing_id'],settings:[],audit:['id','actor_id','target_id','operation','at','result']};
+const TABLES={listings:['id'],answers:['id','listing_id','position'],rewards:['listing_id'],settings:['key','value'],audit:['id','actor_id','target_id','operation','at','result']};
 const FILES=[[/^listings\.sqlite$/,'listings.sqlite'],[/^listings\.sqlite-wal$/,'listings.sqlite-wal'],[/^listings\.sqlite-shm$/,'listings.sqlite-shm'],[/^listings\.json$/,'listings.json'],[/^listings\.json\.backup-[0-9a-f]{16}$/,'listings.json.backup-{digest}']];
 const known=new Set(DATA_INVENTORY.map(item=>item.field));
-// 空の配列・オブジェクトは、既知の項目を持つ入れ物であれば台帳に含まれるものとして扱う。
-const covered=field=>known.has(field)||DATA_INVENTORY.some(item=>item.field.startsWith(field+'.')||item.field.startsWith(field+'['));
+// 空の配列・オブジェクト（value が undefined）だけは、既知の項目を持つ入れ物として扱う。単一の値が入れ物の位置にあれば未登録。
+const covered=(field,value)=>known.has(field)||(value===undefined&&DATA_INVENTORY.some(item=>item.field.startsWith(field+'.')||item.field.startsWith(field+'[')));
 
 function walk(value,prefix,visit,dynamic) {
   if (Array.isArray(value)) {
@@ -84,6 +84,7 @@ function visitStored(dataDir,visit) {
             try { value=JSON.parse(row.value); } catch { value=row.value; }
             walk(value,field,(f,v)=>visit(f,v,{id}),{'settings[moderation]':'{listingId}'});
           }
+          for (const column of Object.keys(row)) if (!TABLES.settings.includes(column)) visit(`settings.${column}`,row[column],{id});
           continue;
         }
         for (const [column,value] of Object.entries(row)) {
@@ -97,22 +98,29 @@ function visitStored(dataDir,visit) {
 }
 
 export function scanStoredData(dataDir) {
-  const observed=new Set();
-  const {files,tables}=visitStored(dataDir,field=>observed.add(field));
+  const observed=new Set(),unknown=new Set();
+  const {files,tables}=visitStored(dataDir,(field,value)=>{observed.add(field);if (!covered(field,value)) unknown.add(field);});
   for (const file of files) if (file.field) observed.add(file.field);
   return {
     observed:[...observed].sort(),
-    unknownFields:[...observed].filter(field=>!covered(field)).sort(),
+    unknownFields:[...unknown].sort(),
     unknownTables:tables.filter(name=>!TABLES[name]),
     unknownFiles:files.filter(file=>!file.field).map(file=>file.name).sort(),
     missingRequired:DATA_INVENTORY.filter(item=>!item.optional&&!observed.has(item.field)).map(item=>item.field),
   };
 }
 
-// 利用者 ID または公開アドレスが残る場所を列挙する。自由記述欄・旧 JSON・外部バックアップの中身は対象外。
+// 利用者 ID または公開アドレスが残る場所を列挙する。自由記述欄と data/ 外のバックアップは対象外。
+// 旧 JSON とその複製は中身を走査しないため、存在すれば unscanned として必ず返す。
 export function findReferences(dataDir,{userId,wallet}={}) {
+  userId=userId==null?'':String(userId);
+  wallet=wallet==null?'':String(wallet);
   const refs=new Map(DATA_INVENTORY.map(item=>[item.field,item.refs]));
   const hits=[];
+  if (userId||wallet) for (const name of readdirSync(dataDir)) {
+    const field=FILES.find(([pattern])=>pattern.test(name))?.[1];
+    if (DATA_INVENTORY.find(item=>item.field===field)?.kind==='legacy_copy') hits.push({field,row:name,unscanned:true});
+  }
   visitStored(dataDir,(field,value,{id,user})=>{
     const kinds=refs.get(field)||[];
     const byUser=userId&&kinds.includes('user')&&(field==='settings[wallet:{userId}]'?user===userId:String(value)===userId);

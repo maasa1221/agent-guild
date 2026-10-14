@@ -76,12 +76,31 @@ test('every field written through the synthetic API flows is in the inventory, a
   assert.deepEqual(scan.missingRequired,[]);
   for (const name of ['listings.json','listings.json.backup-{digest}']) assert.ok(scan.observed.includes(name),name);
 
-  const fields=hits=>[...new Set(hits.map(hit=>hit.field))].sort();
+  const fields=hits=>[...new Set(hits.filter(hit=>!hit.unscanned).map(hit=>hit.field))].sort();
   assert.deepEqual(fields(findReferences(dataDir,{userId:'456',wallet:bobWallet})),['answers.payload.authorId','rewards.payload.history[].to','rewards.payload.paidTo','settings[reports][].reporterId','settings[wallet:{userId}]']);
+  // 旧デモ用 responder_wallet は fixture で alice と同じアドレスを入れたため一致する。
   assert.deepEqual(fields(findReferences(dataDir,{userId:'123',wallet:aliceWallet})),['audit.actor_id','listings.payload.evidenceCheckedBy','listings.payload.posterId','settings[responder_wallet]']);
-  assert.deepEqual(fields(findReferences(dataDir,{userId:'789'})),['settings[moderation].{listingId}.updatedBy','settings[moderation_history][].actorId']);
+  assert.deepEqual(fields(findReferences(dataDir,{userId:789})),['settings[moderation].{listingId}.updatedBy','settings[moderation_history][].actorId']);
   assert.equal(findReferences(dataDir,{userId:'456'}).filter(hit=>hit.field==='answers.payload.authorId').length,2);
-  assert.deepEqual(findReferences(dataDir,{userId:'999',wallet:'0x'+'f'.repeat(40)}),[]);
+  // 旧 JSON は中身を見ないので、該当がなくても未走査として返す。
+  assert.deepEqual(findReferences(dataDir,{userId:'999',wallet:'0x'+'f'.repeat(40)}).map(hit=>[hit.field,hit.unscanned]).sort(),[['listings.json',true],['listings.json.backup-{digest}',true]]);
+  assert.deepEqual(findReferences(dataDir,{}),[]);
+});
+
+test('scalar values where a list or object is expected and extra settings columns are not treated as covered',t=>{
+  const dataDir=mkdtempSync(path.join(os.tmpdir(),'agent-guild-inventory-shape-'));
+  t.after(()=>rmSync(dataDir,{recursive:true,force:true}));
+  const store=openStore(dataDir);
+  store.mutate(state=>{
+    state.listings.push({id:'q',labels:'secret@example.com',answers:[],reward:{amount:0,status:'none',history:['0x'+'d'.repeat(40)]}});
+    state.moderation={q:'free text'};
+    state.reports=['phone 000'];
+  });
+  store.close();
+  const db=new DatabaseSync(path.join(dataDir,'listings.sqlite'));
+  db.exec('ALTER TABLE settings ADD COLUMN email TEXT');
+  db.close();
+  assert.deepEqual(scanStoredData(dataDir).unknownFields,['listings.payload.labels','rewards.payload.history[]','settings.email','settings[moderation].{listingId}','settings[reports][]']);
 });
 
 test('unregistered fields, settings keys, tables and files are reported instead of passing silently',t=>{
