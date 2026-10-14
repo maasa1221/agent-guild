@@ -1,0 +1,8 @@
+# /etc/caddy/Caddyfile。値は /etc/agent-guild/caddy.env から読む。
+# 許可 IP 以外は 403。証明書の取得・更新は Caddy が自動で行う。
+{$AGENT_GUILD_DOMAIN} {
+	@outside not remote_ip {$AGENT_GUILD_ALLOWED_IPS}
+	respond @outside "Forbidden" 403
+	encode gzip
+	reverse_proxy 127.0.0.1:46077
+}

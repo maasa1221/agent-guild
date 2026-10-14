@@ -27,7 +27,7 @@ test('two users and anonymous requests enforce ownership without changing denied
   writeFileSync(path.join(root,'data','listings.json'),JSON.stringify(legacy));
   const port=await freePort();
   const origin=`http://127.0.0.1:${port}`;
-  const child=spawn(process.execPath,['--import',path.join(root,'server','ownership.fixture.mjs'),path.join(root,'server','index.mjs')],{env:{...process.env,PORT:String(port),AGENT_GUILD_ORIGIN:origin,AGENT_GUILD_GITHUB_CLIENT_ID:'fixture-id',AGENT_GUILD_GITHUB_CLIENT_SECRET:'fixture-secret'},stdio:'ignore'});
+  const child=spawn(process.execPath,['--import',path.join(root,'server','ownership.fixture.mjs'),path.join(root,'server','index.mjs')],{env:{...process.env,PORT:String(port),AGENT_GUILD_ORIGIN:origin,AGENT_GUILD_GITHUB_CLIENT_ID:'fixture-id',AGENT_GUILD_GITHUB_CLIENT_SECRET:'fixture-secret',AGENT_GUILD_DEMO_REWARDS:'1'},stdio:'ignore'});
   t.after(()=>{child.kill();rmSync(root,{recursive:true,force:true});});
   const request=(route,options={})=>fetch(origin+route,{redirect:'manual',...options});
   let ready=false;

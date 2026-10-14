@@ -10,7 +10,10 @@ import {inspectEvidence} from './evidence.mjs';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const store = openStore(path.join(root,'data'));
 const PORT = Number(process.env.PORT || 46077);
-const auth = createAuthService({clientId:process.env.AGENT_GUILD_GITHUB_CLIENT_ID,clientSecret:process.env.AGENT_GUILD_GITHUB_CLIENT_SECRET,origin:process.env.AGENT_GUILD_ORIGIN||`http://127.0.0.1:${PORT}`});
+const auth = createAuthService({clientId:process.env.AGENT_GUILD_GITHUB_CLIENT_ID,clientSecret:process.env.AGENT_GUILD_GITHUB_CLIENT_SECRET,origin:process.env.AGENT_GUILD_ORIGIN||`http://127.0.0.1:${PORT}`,requiredOrg:process.env.AGENT_GUILD_GITHUB_ORG||''});
+// 無料版が既定。報奨金・ウォレットの模擬機能はデモ用に明示した場合だけ有効にする。
+const rewardsEnabled=process.env.AGENT_GUILD_DEMO_REWARDS==='1';
+const requireLogin=process.env.AGENT_GUILD_REQUIRE_LOGIN==='1'||Boolean(process.env.AGENT_GUILD_GITHUB_ORG);
 const demo = [{id:'demo-cli-14647',demo:true,sourceUrl:'https://github.com/cli/cli/issues/14647',repo:'cli/cli',number:14647,title:'gh skill update のヘルプ文を修正する',description:'画面確認用のサンプルクエストです。実際の募集ではありません。',body:'GitHub公開Issueへの参照例。内容と受入条件はこのデモの説明です。',language:'Go',labels:['documentation'],state:'open',acceptance:'ヘルプ文と実際の動作が一致することを確認する。',aiPolicy:'unconfirmed',aiEvidence:'デモのため、maintainerからAI利用許可は確認していません。',approvalEvidence:'',approvalStatus:'unconfirmed',reward:{amount:0,status:'none',history:[]},answers:[],working:false,acceptedAnswerId:null,createdAt:'2026-10-12T00:00:00.000Z'}];
 
 class HttpError extends Error {
@@ -72,13 +75,19 @@ const server=http.createServer(async(req,res)=>{
     const url=new URL(req.url,'http://localhost');
     const p=url.pathname;
     if (await auth.handle(req,res,url)) return;
+    if (requireLogin&&!auth.current(req)) {
+      if (p.startsWith('/api/')) return json(res,401,{error:'GitHubでログインしてください。'});
+      if (!auth.configured) return json(res,503,{error:'GitHubログインが未設定のため利用できません。'});
+      res.writeHead(302,{'Location':'/api/auth/login','Cache-Control':'no-store'});
+      return res.end();
+    }
     const write=p.startsWith('/api/')&&req.method!=='GET';
     const session=write?auth.requireSession(req,res,{csrf:true}):null;
     if (write&&!session) return;
     if (req.method==='GET'&&p==='/api/listings') {
       const state=store.read();
       const userId=auth.current(req)?.user.id;
-      return json(res,200,{listings:visible(state),wallet:userId?state.wallets[userId]||'':''});
+      return json(res,200,{listings:visible(state),wallet:rewardsEnabled&&userId?state.wallets[userId]||'':'',rewards:rewardsEnabled});
     }
     const sourceMatch=p.match(/^\/api\/listings\/([^/]+)\/source-status$/);
     if (req.method==='GET'&&sourceMatch) {
@@ -122,6 +131,7 @@ const server=http.createServer(async(req,res)=>{
     }
     if (req.method==='POST'&&p==='/api/listings') {
       const input=validateSubmission(await body(req));
+      if (!rewardsEnabled&&input.amount) throw new HttpError(400,'無料版では報奨金を設定できません。');
       const before=store.read();
       checkPostLimit(before,session.user.id);
       if (all(before).some(x=>x.sourceUrl.toLowerCase()===input.url.toLowerCase())) return json(res,409,{error:'このIssue URLは既に掲載されています。'});
@@ -136,6 +146,7 @@ const server=http.createServer(async(req,res)=>{
       return json(res,201,item);
     }
     if (req.method==='POST'&&p==='/api/wallet') {
+      if (!rewardsEnabled) return json(res,404,{error:'無料版ではウォレットを登録できません。'});
       const input=await body(req);
       const wallet=String(input.wallet||'').trim();
       if (wallet&&!/^0x[a-fA-F0-9]{40}$/.test(wallet)) throw new Error('デモ用のEVMアドレスを0xから42文字で入力してください。');

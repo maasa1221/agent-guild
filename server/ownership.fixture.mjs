@@ -16,6 +16,12 @@ globalThis.fetch=async (input,options={})=>{
     if (!id) throw new Error('unexpected user token');
     return respond({id,login});
   }
+  if (url==='https://api.github.com/user/memberships/orgs/fixture-org') {
+    const login=options.headers.Authorization?.replace('Bearer fixture-','');
+    if (login==='alice') return respond({state:'active'});
+    if (login==='bob') return respond({state:'pending'});
+    return new Response('{}',{status:404});
+  }
   if (/^https:\/\/api\.github\.com\/repos\/owner\/repo\/issues\/[134]$/.test(url)) {
     const number=Number(url.split('/').at(-1));
     return respond({html_url:`https://github.com/owner/repo/issues/${number}`,number,title:'Fixture issue',body:'Fixture',labels:[],state:mode==='source_changed'?'closed':'open',updated_at:mode==='source_changed'?'2026-10-13T00:00:00Z':'2026-10-12T00:00:00Z'});

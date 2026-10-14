@@ -22,7 +22,7 @@ function json(res,status,value) {
   res.end(JSON.stringify(value));
 }
 
-export function createAuthService({clientId,clientSecret,origin,fetcher=fetch,now=Date.now,authorizeUrl='https://github.com/login/oauth/authorize',tokenUrl='https://github.com/login/oauth/access_token',userUrl='https://api.github.com/user'}) {
+export function createAuthService({clientId,clientSecret,origin,fetcher=fetch,now=Date.now,authorizeUrl='https://github.com/login/oauth/authorize',tokenUrl='https://github.com/login/oauth/access_token',userUrl='https://api.github.com/user',requiredOrg='',orgMembershipUrl=org=>`https://api.github.com/user/memberships/orgs/${encodeURIComponent(org)}`}) {
   const appOrigin=new URL(origin);
   if (appOrigin.pathname!=='/' || appOrigin.search || appOrigin.hash || (appOrigin.protocol!=='https:' && !(appOrigin.protocol==='http:' && ['127.0.0.1','localhost'].includes(appOrigin.hostname)))) throw new Error('AGENT_GUILD_ORIGIN は HTTPS またはローカルホストの URL にしてください。');
   const secure=appOrigin.protocol==='https:';
@@ -30,6 +30,7 @@ export function createAuthService({clientId,clientSecret,origin,fetcher=fetch,no
   if (appOrigin.protocol==='http:' && appOrigin.hostname==='127.0.0.1') allowedOrigins.add('http://127.0.0.1:5173');
   const callbackUrl=new URL('/api/auth/callback',appOrigin).toString();
   const configured=Boolean(clientId && clientSecret);
+  if (requiredOrg && !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(requiredOrg)) throw new Error('AGENT_GUILD_GITHUB_ORG は GitHub の組織名にしてください。');
   const states=new Map();
   const sessions=new Map();
 
@@ -77,6 +78,7 @@ export function createAuthService({clientId,clientSecret,origin,fetcher=fetch,no
       target.searchParams.set('state',state);
       target.searchParams.set('code_challenge',challenge(codeVerifier));
       target.searchParams.set('code_challenge_method','S256');
+      if (requiredOrg) target.searchParams.set('scope','read:org');
       setCookies(res,[stateCookie(nonce,STATE_MS/1000)]);
       res.writeHead(302,{'Location':target.toString(),'Cache-Control':'no-store'});
       res.end();
@@ -102,6 +104,15 @@ export function createAuthService({clientId,clientSecret,origin,fetcher=fetch,no
         if (!userResponse.ok) throw new Error('user lookup failed');
         const user=await userResponse.json();
         if (!Number.isSafeInteger(user.id)||user.id<=0||typeof user.login!=='string'||!user.login) throw new Error('invalid user');
+        if (requiredOrg) {
+          // SAML SSO を使う組織では、トークンが SSO 認可されていないと 403 になる。
+          const membership=await fetcher(orgMembershipUrl(requiredOrg),{headers:{Accept:'application/vnd.github+json',Authorization:`Bearer ${token}`,'User-Agent':'agent-guild-local'},signal:AbortSignal.timeout(10000)});
+          const body=membership.ok?await membership.json():null;
+          if (body?.state!=='active') {
+            json(res,403,{error:`GitHub 組織 ${requiredOrg} の有効なメンバーだけが利用できます。SSO の認可を求められた場合は承認してから再度ログインしてください。`});
+            return true;
+          }
+        }
         const sessionToken=random();
         const csrfToken=random();
         sessions.set(hash(sessionToken),{user:{id:String(user.id),login:user.login},csrfToken,csrfHash:hash(csrfToken),expires:now()+SESSION_MS});
