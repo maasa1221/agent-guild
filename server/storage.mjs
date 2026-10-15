@@ -2,6 +2,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {existsSync,linkSync,mkdirSync,readFileSync,unlinkSync,writeFileSync} from 'node:fs';
 import path from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
+import {isUserId} from './identity.mjs';
 
 const VERSION = 2;
 const emptyState = () => ({listings:[],users:{responder:{wallet:''}},wallets:{},moderation:{},reports:[],moderationHistory:[]});
@@ -75,7 +76,7 @@ function writeRows(db, state) {
 }
 
 function insertAudit(db, entry, result) {
-  if (!entry || !/^[1-9][0-9]*$/.test(entry.actorId) || typeof entry.targetId !== 'string' || entry.targetId.length>100 || !['accept','cancel','invalid'].includes(entry.operation)) throw new Error('監査対象の形式が正しくありません。');
+  if (!entry || !isUserId(entry.actorId) || typeof entry.targetId !== 'string' || entry.targetId.length>100 || !['accept','cancel','invalid'].includes(entry.operation)) throw new Error('監査対象の形式が正しくありません。');
   db.prepare('INSERT INTO audit (actor_id, target_id, operation, at, result) VALUES (?, ?, ?, ?, ?)').run(entry.actorId,entry.targetId,entry.operation,new Date().toISOString(),result);
 }
 

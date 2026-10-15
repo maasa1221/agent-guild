@@ -82,7 +82,11 @@ test('organization restriction requires an active member login for every page an
   const {request,callback,login}=await startServer(t,{AGENT_GUILD_GITHUB_ORG:'fixture-org'});
   const page=await request('/');
   assert.equal(page.status,302);
-  assert.equal(page.headers.get('location'),'/api/auth/login');
+  assert.equal(page.headers.get('location'),'/api/auth/signin');
+  const signin=await request('/api/auth/signin');
+  const html=await signin.text();
+  assert.match(html,/href="\/api\/auth\/login"/);
+  assert.doesNotMatch(html,/google\/login|demo-cli-14647/);
   assert.equal((await request('/assets/app.js')).status,302);
   assert.equal((await request('/api/listings')).status,401);
   assert.equal((await request('/api/listings/demo-cli-14647')).status,401);
