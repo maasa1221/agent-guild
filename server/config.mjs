@@ -21,11 +21,15 @@ export function loadConfig(env) {
   if (internal) {
     const missing=[];
     if (originUrl.protocol!=='https:' || PLACEHOLDER.test(originUrl.hostname)) missing.push('AGENT_GUILD_ORIGIN');
-    if (!github.clientId) missing.push('AGENT_GUILD_GITHUB_CLIENT_ID');
-    if (!github.clientSecret) missing.push('AGENT_GUILD_GITHUB_CLIENT_SECRET');
+    if (!github.clientId || PLACEHOLDER.test(github.clientId)) missing.push('AGENT_GUILD_GITHUB_CLIENT_ID');
+    if (!github.clientSecret || PLACEHOLDER.test(github.clientSecret)) missing.push('AGENT_GUILD_GITHUB_CLIENT_SECRET');
     if (!requiredOrg || PLACEHOLDER.test(requiredOrg)) missing.push('AGENT_GUILD_GITHUB_ORG');
     if (!googleSet) missing.push('AGENT_GUILD_GOOGLE_CLIENT_ID','AGENT_GUILD_GOOGLE_CLIENT_SECRET','AGENT_GUILD_GOOGLE_DOMAINS');
-    else if ([...google.domains].some(domain=>PLACEHOLDER.test(domain))) missing.push('AGENT_GUILD_GOOGLE_DOMAINS');
+    else {
+      if (PLACEHOLDER.test(google.clientId)) missing.push('AGENT_GUILD_GOOGLE_CLIENT_ID');
+      if (PLACEHOLDER.test(google.clientSecret)) missing.push('AGENT_GUILD_GOOGLE_CLIENT_SECRET');
+      if ([...google.domains].some(domain=>PLACEHOLDER.test(domain))) missing.push('AGENT_GUILD_GOOGLE_DOMAINS');
+    }
     if (missing.length) throw new Error(`社内運用モードでは次の設定を実際の値にしてください: ${missing.join(', ')}`);
   }
   // 組織・ドメインで利用者を絞る設定があるときは、閲覧を含めてログインを必須にする。

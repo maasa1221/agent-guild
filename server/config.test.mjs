@@ -40,6 +40,18 @@ test('an HTTPS origin or AGENT_GUILD_INTERNAL=1 requires both providers, the org
   missing({...INTERNAL,AGENT_GUILD_INTERNAL:'true'},/AGENT_GUILD_INTERNAL/);
 });
 
+test('internal mode rejects placeholder OAuth client IDs and secrets by key name only',()=>{
+  const placeholders={AGENT_GUILD_GITHUB_CLIENT_ID:'example-client',AGENT_GUILD_GITHUB_CLIENT_SECRET:'example-secret',AGENT_GUILD_GOOGLE_CLIENT_ID:'example-client.apps.googleusercontent.com',AGENT_GUILD_GOOGLE_CLIENT_SECRET:'example-secret'};
+  for (const [key,value] of Object.entries(placeholders)) {
+    assert.throws(()=>loadConfig({...INTERNAL,[key]:value}),error=>{
+      const listed=error.message.split(': ')[1]?.split(', ');
+      return JSON.stringify(listed)===JSON.stringify([key]) && !error.message.includes(value) && !/fixture-(google-)?secret/.test(error.message);
+    },key);
+  }
+  // ローカル開発では、例示に似た値でも任意設定として受け付ける。
+  assert.equal(loadConfig({...GITHUB,AGENT_GUILD_GITHUB_CLIENT_ID:'example-client'}).internal,false);
+});
+
 test('partial Google settings are rejected in every mode and errors never echo secrets',()=>{
   for (const omit of Object.keys(GOOGLE)) {
     const env={...GITHUB,...GOOGLE,[omit]:''};
