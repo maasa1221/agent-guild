@@ -42,14 +42,19 @@ test('an HTTPS origin or AGENT_GUILD_INTERNAL=1 requires both providers, the org
 
 test('internal mode rejects placeholder OAuth client IDs and secrets by key name only',()=>{
   const placeholders={AGENT_GUILD_GITHUB_CLIENT_ID:'example-client',AGENT_GUILD_GITHUB_CLIENT_SECRET:'example-secret',AGENT_GUILD_GOOGLE_CLIENT_ID:'example-client.apps.googleusercontent.com',AGENT_GUILD_GOOGLE_CLIENT_SECRET:'example-secret'};
-  for (const [key,value] of Object.entries(placeholders)) {
+  // deploy/preflight.sh と同じく、区切りのない埋め込み（fooexamplebar）も例示値として拒否する。
+  const embedded={AGENT_GUILD_GITHUB_CLIENT_ID:'fooexamplebar',AGENT_GUILD_GITHUB_CLIENT_SECRET:'secretexamplevalue',AGENT_GUILD_GOOGLE_CLIENT_ID:'123examplefoo.apps.googleusercontent.com',AGENT_GUILD_GOOGLE_CLIENT_SECRET:'GOCSPX-fooexamplebar'};
+  // 従来の PLACEHOLDER で拒否していた your-org と大文字を含む Example も、引き続き拒否する。
+  const existing=Object.keys(placeholders).flatMap(key=>[[key,'your-org'],[key,'Example-client'],[key,'fooEXAMPLEbar']]);
+  for (const [key,value] of [...Object.entries(placeholders),...Object.entries(embedded),...existing]) {
     assert.throws(()=>loadConfig({...INTERNAL,[key]:value}),error=>{
       const listed=error.message.split(': ')[1]?.split(', ');
       return JSON.stringify(listed)===JSON.stringify([key]) && !error.message.includes(value) && !/fixture-(google-)?secret/.test(error.message);
-    },key);
+    },`${key}=${value.length} chars`);
   }
   // ローカル開発では、例示に似た値でも任意設定として受け付ける。
   assert.equal(loadConfig({...GITHUB,AGENT_GUILD_GITHUB_CLIENT_ID:'example-client'}).internal,false);
+  assert.equal(loadConfig({...GITHUB,...GOOGLE,AGENT_GUILD_GITHUB_CLIENT_SECRET:'fooexamplebar',AGENT_GUILD_GOOGLE_CLIENT_ID:'fooexamplebar'}).internal,false);
 });
 
 test('partial Google settings are rejected in every mode and errors never echo secrets',()=>{
