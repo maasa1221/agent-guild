@@ -31,7 +31,7 @@ OAuth は公開プロフィールの利用者 ID とログイン名だけを取�
 
 Google ログインは任意です。使う場合は `AGENT_GUILD_GOOGLE_CLIENT_ID`、`AGENT_GUILD_GOOGLE_CLIENT_SECRET`、`AGENT_GUILD_GOOGLE_DOMAINS`（許可する Workspace の主ドメイン。小文字・カンマ区切り・完全一致）の3つをすべて設定します。一部だけ、または不正なドメインを設定するとサーバーは起動しません。コールバック URL は `<AGENT_GUILD_ORIGIN>/api/auth/google/callback`（ローカルでは `http://127.0.0.1:46077/api/auth/google/callback`）です。Google を設定すると、閲覧を含む全ページでログインが必要になります。
 
-Google はサーバー側の authorization code flow で、state・一時 Cookie・PKCE S256・nonce を照合します。スコープは `openid email` だけで、refresh token は要求・保存しません。ID token は `jose` で Google の固定の JWKS を使って検証し、issuer、audience、azp、期限、nonce、`email_verified` が `true` であること、署名済みの `hd` とメールのドメインが許可ドメインと完全一致することを確認します。ID token と access token は検証後に破棄します。利用者 ID は `google:<sub>` で、GitHub の数値 ID とは別です。同じメールでも GitHub と統合しません。セッション・ログアウト・CSRF は GitHub と共通です。
+Google はサーバー側の authorization code flow で、state・一時 Cookie・PKCE S256・nonce を照合します。スコープは `openid email` だけで、refresh token は要求・保存しません。ID token は `jose` で Google の固定の JWKS を使って検証し、issuer、audience、azp、期限、nonce、`email_verified` が `true` であること、署名済みの `hd` とメールのドメインが許可ドメインと完全一致することを確認します。ID token と access token は検証後に破棄します。利用者 ID は `google:<sub>` で、GitHub の数値 ID とは別です。同じメールでも GitHub と統合しません。セッション・ログアウト・CSRF は GitHub と共通です。ログアウト時やセッション切れ（API が 401 を返したとき）は、画面の一覧と詳細を消して `/api/auth/signin`（設定済みの provider を選ぶ画面）へ移ります。それまでに返ってきた API の応答は画面に表示しません。デモ報奨金を有効にした場合も、ウォレット登録は GitHub ログインだけで、Google ログインでは登録欄を表示しません。
 
 設定がない場合も一覧は閲覧できますが、ログイン開始は利用できず、API の書き込みは拒否されます。画面はログインした GitHub 利用者と掲載の所有者に応じて操作を表示します。API は GitHub の利用者 ID に基づき、新規掲載の検収・取消を掲載者本人に、新規回答とウォレット公開アドレスを回答者本人に結び付けます。旧 JSON から移行した掲載・回答は所有者不明として読み取り専用にし、既存の共用デモアドレスを誰にも自動割当てしません。社外への公開運用には使えません。社内向けの公開は次の節の設定で行います。
 
