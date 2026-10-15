@@ -1,0 +1,6 @@
+[Unit]
+Description=Agent Guild offline data backup
+
+[Service]
+Type=oneshot
+ExecStart=/opt/agent-guild/deploy/backup.sh

@@ -30,7 +30,7 @@ test('every field written through the synthetic API flows is in the inventory, a
   const port=listener.address().port;
   await new Promise(resolve=>listener.close(resolve));
   const origin=`http://127.0.0.1:${port}`;
-  const child=spawn(process.execPath,['--import',path.join(root,'server','ownership.fixture.mjs'),path.join(root,'server','index.mjs')],{env:{...process.env,PORT:String(port),AGENT_GUILD_ORIGIN:origin,AGENT_GUILD_GITHUB_CLIENT_ID:'fixture-id',AGENT_GUILD_GITHUB_CLIENT_SECRET:'fixture-secret',AGENT_GUILD_ADMIN_IDS:'789',AGENT_GUILD_FIXTURE_STATE:statePath},stdio:['ignore','ignore','pipe']});
+  const child=spawn(process.execPath,['--import',path.join(root,'server','ownership.fixture.mjs'),path.join(root,'server','index.mjs')],{env:{...process.env,PORT:String(port),AGENT_GUILD_ORIGIN:origin,AGENT_GUILD_GITHUB_CLIENT_ID:'fixture-id',AGENT_GUILD_GITHUB_CLIENT_SECRET:'fixture-secret',AGENT_GUILD_DEMO_REWARDS:'1',AGENT_GUILD_ADMIN_IDS:'789',AGENT_GUILD_FIXTURE_STATE:statePath},stdio:['ignore','ignore','pipe']});
   let stderr='';
   child.stderr.on('data',chunk=>{stderr+=chunk.toString();});
   t.after(()=>{child.kill();rmSync(root,{recursive:true,force:true});});

@@ -1,0 +1,20 @@
+[Unit]
+Description=Agent Guild
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=agentguild
+Group=agentguild
+WorkingDirectory=/opt/agent-guild
+EnvironmentFile=/etc/agent-guild/app.env
+ExecStart=/usr/bin/node server/index.mjs
+Restart=on-failure
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/agent-guild/data
+
+[Install]
+WantedBy=multi-user.target
