@@ -23,7 +23,7 @@ function createSchema(db) {
     COMMIT;`);
 }
 
-function readRows(db) {
+export function readRows(db) {
   const state = emptyState();
   const answers = new Map();
   for (const row of db.prepare('SELECT listing_id, payload FROM answers ORDER BY listing_id, position').all()) {
