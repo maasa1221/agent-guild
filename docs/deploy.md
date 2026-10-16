@@ -141,8 +141,9 @@ sudo bash /opt/agent-guild/deploy/setup.sh
 
 - **ログ**: `journalctl -u agent-guild -u caddy`
 - **バックアップ**:
-  - 毎日 4:00（VM のタイムゾーン）に数秒サービスを止め、`data/` を `/var/backups/agent-guild/<日時>` にコピーする。直近 14 世代を残す。セッションはメモリ上にあるので、このとき全員ログアウトされる。意図して停止中のサービスは、バックアップ後も起動しない。
-  - 手動で取るときは `sudo systemctl start agent-guild-backup` を実行する。
+  - 毎日 4:00（VM のタイムゾーン）に数秒サービスを止め、`data/` を `/var/backups/agent-guild/<日時>.partial` にコピーする。`server/verify-backup.mjs` でコピーを検査し、通ったものだけを `<日時>` に改名してから古い世代を消す。直近 14 世代を残す（`agent-guild-backup.service` の `Environment=AGENT_GUILD_BACKUP_KEEP=` で 1〜365 に変更できる。0・負数・数字以外はサービスを止める前に失敗する）。セッションはメモリ上にあるので、このとき全員ログアウトされる。意図して停止中のサービスは、バックアップ後も起動しない。
+  - 手動で取るときは `sudo systemctl start agent-guild-backup` を実行する。結果は `journalctl -u agent-guild-backup` で確認し、`verify-backup: ok schema=2 listings=… answers=… audit=…` と `backup: /var/backups/agent-guild/<日時>` が出ていれば成功。
+  - 失敗時（ユニットが failed）は、出力の段階名で原因を切り分ける。`phase=database-file` は `listings.sqlite` の欠落、`open`・`integrity` は DB の破損、`schema` は対応外の schema、`tables`・`foreign-keys`・`data`・`audit` はアプリが読めない内容。失敗した実行のコピーは残さず、以前の世代は消さない。開始時に動いていたサービスは起動し直す。「バックアップ <パス> は作成しましたが、agent-guild の再起動に失敗しました」の場合は検査済みのバックアップが作成済み（古い世代は未削除）。それ以外の「agent-guild の再起動に失敗しました」は停止・コピー・検査の失敗後の再起動失敗で、今回のバックアップは作成されていない。どちらも `journalctl -u agent-guild` で起動失敗を調べる。「同じ日時名のバックアップが既にあります」の場合は、既存の世代や `.partial` を確認してから再実行する（自動では消さない）。
   - バックアップは同じ VM のディスク上にあるので、VM ごと失うと戻せない。重要になったら別の保管先へのコピーを足す。
 - **復元**: [復旧手順案](offline-recovery.md) のとおり、サービスを止め、バックアップを隔離先で確認してから `data/` を差し替える。
 - **保存データ**: 何が保存されているかは [運用準備メモの保存データの棚卸し](decision-readiness.md) と `server/data-inventory.mjs` を参照する。
