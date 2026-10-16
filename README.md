@@ -1,6 +1,6 @@
 # Agent Guild（エージェントギルド）
 
-AIを使う前提を**掲載者が明示する**OSS Issue掲示板です。既定は報奨金・支払のない**無料版**で、依頼者・回答者とも無料です。社内向けには [公開手順](docs/deploy.md) で、IP 制限と GitHub 組織メンバーのログインを付けて公開できます。GitHubの公開Issueを参照し、達成条件、AI利用方針の根拠、元Issueへのリンクを掲載します。UIは日本語中心の「クエストボード」ですが、実際の開発に必要な情報を優先しています。
+AIを使う前提を**掲載者が明示する**OSS Issue掲示板です。既定は報奨金・支払のない**無料版**で、依頼者・回答者とも無料です。社内向けには [公開手順](docs/deploy.md) で、IP 制限と、GitHub 組織メンバーまたは許可 Workspace ドメインの Google アカウントによるログインを付けて公開できます。GitHubの公開Issueを参照し、達成条件、AI利用方針の根拠、元Issueへのリンクを掲載します。UIは日本語中心の「クエストボード」ですが、実際の開発に必要な情報を優先しています。
 
 ## 起動
 
@@ -27,6 +27,12 @@ OAuth は公開プロフィールの利用者 ID とログイン名だけを取�
 
 開発時に `npm run dev` の Vite 画面（`http://127.0.0.1:5173`）を使う場合、そのローカル origin からの書き込みも CSRF 確認後に受け付けます。OAuth コールバック後は API サーバーの画面に戻るため、Vite の画面を使い続ける場合は `http://127.0.0.1:5173` を開き直してください。HTTPS の origin ではこのローカル開発用例外は適用しません。
 
+## Google ログインのローカル設定
+
+Google ログインは任意です。使う場合は `AGENT_GUILD_GOOGLE_CLIENT_ID`、`AGENT_GUILD_GOOGLE_CLIENT_SECRET`、`AGENT_GUILD_GOOGLE_DOMAINS`（許可する Workspace の主ドメイン。小文字・カンマ区切り・完全一致）の3つをすべて設定します。一部だけ、または不正なドメインを設定するとサーバーは起動しません。コールバック URL は `<AGENT_GUILD_ORIGIN>/api/auth/google/callback`（ローカルでは `http://127.0.0.1:46077/api/auth/google/callback`）です。Google を設定すると、閲覧を含む全ページでログインが必要になります。
+
+Google はサーバー側の authorization code flow で、state・一時 Cookie・PKCE S256・nonce を照合します。スコープは `openid email` だけで、refresh token は要求・保存しません。ID token は `jose` で Google の固定の JWKS を使って検証し、issuer、audience、azp、期限、nonce、`email_verified` が `true` であること、署名済みの `hd` とメールのドメインが許可ドメインと完全一致することを確認します。ID token と access token は検証後に破棄します。利用者 ID は `google:<sub>` で、GitHub の数値 ID とは別です。同じメールでも GitHub と統合しません。セッション・ログアウト・CSRF は GitHub と共通です。ログアウト時やセッション切れ（API が 401 を返したとき）は、画面の一覧と詳細を消して `/api/auth/signin`（設定済みの provider を選ぶ画面）へ移ります。それまでに返ってきた API の応答は画面に表示しません。デモ報奨金を有効にした場合も、ウォレット登録は GitHub ログインだけで、Google ログインでは登録欄を表示しません。
+
 設定がない場合も一覧は閲覧できますが、ログイン開始は利用できず、API の書き込みは拒否されます。画面はログインした GitHub 利用者と掲載の所有者に応じて操作を表示します。API は GitHub の利用者 ID に基づき、新規掲載の検収・取消を掲載者本人に、新規回答とウォレット公開アドレスを回答者本人に結び付けます。旧 JSON から移行した掲載・回答は所有者不明として読み取り専用にし、既存の共用デモアドレスを誰にも自動割当てしません。社外への公開運用には使えません。社内向けの公開は次の節の設定で行います。
 
 ## 無料版と社内公開の設定
@@ -34,7 +40,9 @@ OAuth は公開プロフィールの利用者 ID とログイン名だけを取�
 | 環境変数 | 既定 | 内容 |
 | --- | --- | --- |
 | `AGENT_GUILD_GITHUB_ORG` | なし | 設定すると、この GitHub 組織の有効なメンバーだけがログインでき、閲覧を含む全ページでログインが必要になる。SAML SSO の組織では初回に SSO の認可を求められる。 |
-| `AGENT_GUILD_REQUIRE_LOGIN` | なし | `1` で、組織を指定せずに全ページのログインを必須にする。 |
+| `AGENT_GUILD_REQUIRE_LOGIN` | なし | `1` で、組織を指定せずに全ページのログインを必須にする。ローカル開発用。 |
+| `AGENT_GUILD_GOOGLE_CLIENT_ID` / `AGENT_GUILD_GOOGLE_CLIENT_SECRET` / `AGENT_GUILD_GOOGLE_DOMAINS` | なし | 3つ揃ったときだけ Google ログインを有効にする。一部だけなら起動しない。 |
+| `AGENT_GUILD_INTERNAL` | なし | `1` で社内運用モード。HTTPS の `AGENT_GUILD_ORIGIN` でも自動で有効になる。HTTPS origin、GitHub の Client ID/secret と組織、Google の3項目がすべて実際の値でないと起動しない。同梱の systemd サービスは常に `1` で起動する。ローカルの `http://127.0.0.1` 開発では使わない。 |
 | `AGENT_GUILD_DEMO_REWARDS` | なし | `1` のときだけ、模擬 USDC 報奨金とウォレット登録を有効にする（開発・デモ用）。既定の無料版では、報奨金付きの掲載とウォレット登録を拒否し、画面にも出さない。 |
 
 IP 制限、HTTPS、日次バックアップを含む VM での公開手順は [docs/deploy.md](docs/deploy.md) にあります。
@@ -67,7 +75,7 @@ IP 制限、HTTPS、日次バックアップを含む VM での公開手順は [
 
 新規掲載と回答は、ログイン利用者ごとに初期値で **60秒あたり5件** までです。ローカル環境変数 `AGENT_GUILD_POST_LIMIT`（1〜100）と `AGENT_GUILD_POST_WINDOW_MS`（1000〜86400000）で変更できます。上限を超えた投稿は HTTP 429 で保存しません。
 
-ログイン利用者は掲載または回答を理由付きで通報できます。同じ対象への重複通報は拒否し、通報も利用者ごとに同じ時間枠の件数上限を適用します。通報と管理者操作の履歴は SQLite に保存されます。`AGENT_GUILD_ADMIN_IDS` に管理者の GitHub 数値 ID をカンマ区切りで設定した場合だけ、`GET /api/moderation` で通報を確認し、`POST /api/moderation/:listingId` に `{"action":"hide","reason":"..."}` または `{"action":"restore","reason":"..."}` を送れます。操作にはログインセッション、CSRF token、10〜500文字の理由が必要です。未設定時は管理者なしです。一般利用者の管理者操作は拒否され、非表示の掲載は一般一覧と詳細から除外されます。誤判定は restore で戻せます。これはローカル試作の運用停止手段であり、公開運用を許可するものではありません。
+ログイン利用者は掲載または回答を理由付きで通報できます。同じ対象への重複通報は拒否し、通報も利用者ごとに同じ時間枠の件数上限を適用します。通報と管理者操作の履歴は SQLite に保存されます。`AGENT_GUILD_ADMIN_IDS` に管理者の GitHub 数値 ID をカンマ区切りで設定した場合だけ（管理者は GitHub の数値 ID だけで指定でき、Google アカウントやそのメールは管理者判定に使いません）、`GET /api/moderation` で通報を確認し、`POST /api/moderation/:listingId` に `{"action":"hide","reason":"..."}` または `{"action":"restore","reason":"..."}` を送れます。操作にはログインセッション、CSRF token、10〜500文字の理由が必要です。未設定時は管理者なしです。一般利用者の管理者操作は拒否され、非表示の掲載は一般一覧と詳細から除外されます。誤判定は restore で戻せます。これはローカル試作の運用停止手段であり、公開運用を許可するものではありません。
 
 ### 模擬支払
 
@@ -80,7 +88,7 @@ IP 制限、HTTPS、日次バックアップを含む VM での公開手順は [
 | 待機中・失敗 | 取消 | 取消済み |
 | 模擬支払済み・取消済み | 検収・取消 | 409、状態不変 |
 
-SQLite の監査表には検収・取消の操作者 ID、掲載 ID、操作、時刻、適用または拒否の結果だけを記録します。セッション Cookie、OAuth token、ウォレットアドレスは記録しません。既存 schema v1 は起動時に v2 へ移行します。
+SQLite の監査表には検収・取消の操作者 ID（GitHub の数値 ID または `google:<sub>`。schema は変更なし）、掲載 ID、操作、時刻、適用または拒否の結果だけを記録します。セッション Cookie、OAuth token、ウォレットアドレスは記録しません。既存 schema v1 は起動時に v2 へ移行します。
 
 本番化には認証と権限、GitHub maintainer承認内容の人による判断と失効対応、本番向けの監査運用と復旧、スパム対策、チェーン・トークン、鍵管理、アップグレード権限、返金権限、検収主体、送金provider、KYC/法務と資金管理のレビューが必要です。Stripeの[stablecoin payouts](https://docs.stripe.com/connect/stablecoin-payouts)は現時点で米国プラットフォーム限定のprivate previewで、日本向けUSDC送金手段として採用済みではありません。資金移動に関する判断は[金融庁FAQ](https://www.fsa.go.jp/news/27/sonota/20151214-2.html)等を踏まえた専門レビューが必要で、無料・OSS・自己管理だけを理由に登録不要とは判断していません。
 

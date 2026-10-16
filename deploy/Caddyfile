@@ -1,5 +1,7 @@
 # /etc/caddy/Caddyfile。値は /etc/agent-guild/caddy.env から読む。
 # 許可 IP 以外は 403。証明書の取得・更新は Caddy が自動で行う。
+# remote_ip は Caddy に直接つないだ接続元だけを見る。X-Forwarded-For などの転送ヘッダーは信用しない。
+# 前段に proxy・CDN・ロードバランサーを置く場合は、この制限が働かなくなるため構成から設計し直す。
 {$AGENT_GUILD_DOMAIN} {
 	@outside not remote_ip {$AGENT_GUILD_ALLOWED_IPS}
 	respond @outside "Forbidden" 403

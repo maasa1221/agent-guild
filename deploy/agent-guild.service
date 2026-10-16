@@ -8,7 +8,9 @@ User=agentguild
 Group=agentguild
 WorkingDirectory=/opt/agent-guild
 EnvironmentFile=/etc/agent-guild/app.env
-ExecStart=/usr/bin/node server/index.mjs
+# 社内運用モードを固定する。app.env で上書きできないよう ExecStart で渡す。
+# 必須設定が欠けていればサーバーは待ち受け前に終了する。
+ExecStart=/usr/bin/env AGENT_GUILD_INTERNAL=1 /usr/bin/node server/index.mjs
 Restart=on-failure
 NoNewPrivileges=true
 ProtectSystem=strict

@@ -7,7 +7,7 @@
 
 .accepted-answer{display:inline-block;margin-left:12px;color:#2e6078;font-size:11px}.review-answer{display:flex;align-items:center;justify-content:center;gap:6px;margin-top:13px;padding:9px 12px;font-size:11px}
 
-.auth-action{border:1px solid #e4e7df;border-radius:6px;background:#fff;color:#254569;padding:9px;font-size:11px;white-space:nowrap;max-width:170px;overflow:hidden;text-overflow:ellipsis;text-decoration:none}.auth-action:hover{background:#f3f6f5}
+.auth-action{border:1px solid #e4e7df;border-radius:6px;background:#fff;color:#254569;padding:9px;font-size:11px;white-space:nowrap;max-width:170px;overflow:hidden;text-overflow:ellipsis;text-decoration:none}.auth-action:hover{background:#f3f6f5}.auth-user{min-width:0;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:#637168}
 @media(max-width:600px){.header-inner{height:auto;min-height:65px;flex-wrap:wrap;padding:9px 0}.header-actions{flex:1 1 100%;justify-content:flex-end}.header select{width:auto;max-width:150px}}
 
 .progress .cancelled-stage{grid-column:1/-1;justify-content:center;border-right:0;background:#fff3e7;color:#815d3d}

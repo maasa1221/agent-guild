@@ -7,15 +7,8 @@ app=/opt/agent-guild
 conf=/etc/agent-guild
 [ "$(id -u)" = 0 ] || { echo 'root で実行してください。'; exit 1; }
 [ -f "$app/package.json" ] || { echo "$app にリポジトリを clone してください。"; exit 1; }
-for f in app.env caddy.env; do
-  [ -f "$conf/$f" ] || { echo "$conf/$f がありません。deploy/$f.example を元に作成してください。"; exit 1; }
-done
-value() { sed -n "s/^$2=//p" "$conf/$1" | tail -n 1; }
-for pair in app.env:AGENT_GUILD_ORIGIN app.env:AGENT_GUILD_GITHUB_CLIENT_ID app.env:AGENT_GUILD_GITHUB_CLIENT_SECRET app.env:AGENT_GUILD_GITHUB_ORG caddy.env:AGENT_GUILD_DOMAIN caddy.env:AGENT_GUILD_ALLOWED_IPS; do
-  v=$(value "${pair%%:*}" "${pair#*:}")
-  case "$v" in ''|*example*|your-org|203.0.113.*) echo "${pair%%:*} の ${pair#*:} を実際の値にしてください。"; exit 1;; esac
-done
-[ "$(value app.env AGENT_GUILD_ORIGIN)" = "https://$(value caddy.env AGENT_GUILD_DOMAIN)" ] || { echo 'AGENT_GUILD_ORIGIN は https://<AGENT_GUILD_DOMAIN> にしてください。'; exit 1; }
+# 設定の検査はホストを変更する処理（apt・swap・ユーザー作成・配置・サービス操作）より前に行う。
+bash "$app/deploy/preflight.sh" "$conf"
 
 export DEBIAN_FRONTEND=noninteractive
 # 1 GB の無料 VM ではビルドがメモリ不足になり得るため、swap がなければ 2 GB 作る。
