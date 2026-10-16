@@ -23,10 +23,16 @@ if [ "$(awk '/MemTotal/{print $2}' /proc/meminfo)" -lt 2000000 ] && [ -z "$(swap
   fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
   grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
 fi
-if ! node -v 2>/dev/null | grep -q '^v2[2-9]\.'; then
+. "$app/deploy/node-version.sh"
+# サービスは /usr/bin/node で起動するため、その版を判定する。
+if ! node_version_ok /usr/bin/node; then
   curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
   apt-get install -y nodejs
 fi
+# npm・ビルドが使う PATH 上の node と、サービスが使う /usr/bin/node の両方を確認してから進む。
+for n in /usr/bin/node node; do
+  node_version_ok "$n" || { echo "$n が Node.js $node_min 以上ではありません（現在: $("$n" -v 2>/dev/null || echo 未インストール)）。"; exit 1; }
+done
 if ! command -v caddy >/dev/null; then
   apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl gnupg
   curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor --yes -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
