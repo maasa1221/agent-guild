@@ -64,3 +64,31 @@ test('partial Google settings are rejected in every mode and errors never echo s
   }
   assert.throws(()=>loadConfig({...INTERNAL,AGENT_GUILD_GITHUB_CLIENT_ID:''}),error=>!error.message.includes('fixture-secret'));
 });
+
+const POSTING={
+  AGENT_GUILD_POST_LIMIT:{fallback:5,name:'postLimit',accept:[['1',1],['100',100],['05',5],['+7',7],['007',7],[' 10\t',10]],reject:['0','101','-1','invalid','5.5','5.0','1e1','0x10','Infinity','NaN',' ','\t','+','++5','5 5','１０','9'.repeat(400)]},
+  AGENT_GUILD_POST_WINDOW_MS:{fallback:60000,name:'postWindowMs',accept:[['1000',1000],['86400000',86400000],['060000',60000],['+1000',1000],[' 2000 ',2000]],reject:['0','999','86400001','-1000','invalid','1000.5','1e3','0x3e8','Infinity','NaN',' ','+','1 000','9'.repeat(400)]},
+};
+
+test('posting limits default when absent or empty and accept exact decimal integer bounds',()=>{
+  const bare=loadConfig({});
+  assert.equal(bare.postLimit,5);
+  assert.equal(bare.postWindowMs,60000);
+  for (const [key,{fallback,name,accept}] of Object.entries(POSTING)) {
+    assert.equal(loadConfig({[key]:''})[name],fallback,`${key} empty`);
+    for (const [text,value] of accept) assert.equal(loadConfig({[key]:text})[name],value,`${key}=${JSON.stringify(text)}`);
+  }
+  // 社内運用モードでも同じ規則で読む。
+  const internal=loadConfig({...INTERNAL,AGENT_GUILD_POST_LIMIT:'100',AGENT_GUILD_POST_WINDOW_MS:'1000'});
+  assert.deepEqual([internal.postLimit,internal.postWindowMs],[100,1000]);
+});
+
+test('invalid posting limits are rejected by key name only, without echoing values',()=>{
+  for (const [key,{reject}] of Object.entries(POSTING)) {
+    for (const text of reject) {
+      // 固定文と項目名だけで、値や秘密値を含まない。
+      assert.throws(()=>loadConfig({[key]:text,...GITHUB}),error=>error.message===`投稿制限の設定が正しくありません: ${key}`,`${key}=${JSON.stringify(text.slice(0,20))}`);
+    }
+  }
+  assert.throws(()=>loadConfig({AGENT_GUILD_POST_LIMIT:'invalid',AGENT_GUILD_POST_WINDOW_MS:'0'}),{message:'投稿制限の設定が正しくありません: AGENT_GUILD_POST_LIMIT, AGENT_GUILD_POST_WINDOW_MS'});
+});

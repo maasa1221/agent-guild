@@ -61,9 +61,8 @@ async function githubIssue(parsed) {
 
 // 管理者は GitHub の数値 ID だけで指定する。Google のメールや sub は管理者判定に使わない。
 const adminIds=new Set((process.env.AGENT_GUILD_ADMIN_IDS||'').split(',').map(id=>id.trim()).filter(id=>/^[1-9][0-9]*$/.test(id)));
-const postLimit=Number(process.env.AGENT_GUILD_POST_LIMIT||5);
-const postWindowMs=Number(process.env.AGENT_GUILD_POST_WINDOW_MS||60000);
-if (!Number.isSafeInteger(postLimit)||postLimit<1||postLimit>100||!Number.isSafeInteger(postWindowMs)||postWindowMs<1000||postWindowMs>86400000) throw new Error('投稿制限の設定が正しくありません。');
+// 投稿制限は loadConfig で DB を開く前に検査済み。
+const {postLimit,postWindowMs}=config;
 function all(state) { return [...state.listings,...demo]; }
 function visible(state) {return all(state).filter(item=>!state.moderation[item.id]?.hidden);}
 function requireAdmin(session) {if (!adminIds.has(session.user.id)) throw new HttpError(403,'管理者だけが操作できます。');}
