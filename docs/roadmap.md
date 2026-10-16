@@ -10,13 +10,19 @@ Agent Guild は、AI 利用方針を掲載者が明示した OSS Issue を探し
 
 `main` には PR #19 で社内向け無料版の公開構成が入っています。報奨金とウォレットは既定で無効です。Caddy による接続元 IP の制限、GitHub 組織メンバーに限るログイン、systemd での起動、毎日の停止時バックアップ（直近 14 世代、同じ VM のディスク上）を含みます。アプリ本体には、公開 GitHub Issue の参照、検索と絞り込み、掲載者による AI 利用申告、複数回答からの検収対象選択、GitHub OAuth のサーバー側セッション、利用者 ID に基づく本人権限、SQLite 保存と旧 JSON 移行、監査記録、公開コメントの存在確認、投稿制限・通報・管理者による非表示があります。Issue #2〜#8 は closed、Project では Done です。
 
-Google ログインと社内運用の必須設定は、作業ブランチの候補実装で、まだ `main` には入っていません。内容は次の Issue に対応します。
+Google/GitHub の SSO と社内運用の必須設定は PR #25 で `main` に入りました。内容は次の Issue に対応し、いずれも closed、Project では Done です。
 
 - [#20](https://github.com/maasa1221/agent-guild/issues/20): Google の ID を `google:<sub>` として GitHub の数値 ID と分け、監査に記録する。
 - [#21](https://github.com/maasa1221/agent-guild/issues/21): 社内運用モードで、設定の欠落・一部だけ・例示値の場合は起動と導入を拒否する。
 - [#23](https://github.com/maasa1221/agent-guild/issues/23): Google OIDC でログインし、許可した Workspace ドメインのアカウントだけを通す。
 
-この候補は合成の利用者と合成署名のトークンでテストしただけで、Google と GitHub の実 grant、実環境への導入は検証していません。Node.js の最低版の判定は [#22](https://github.com/maasa1221/agent-guild/issues/22) で別に扱います。いずれも、レビューと merge が済むまで完了とは扱いません。
+Node.js の最低版の判定（[#22](https://github.com/maasa1221/agent-guild/issues/22)）は PR #24 で `main` に入りました。続いて PR #28 で停止時バックアップの検証と隔離した復元候補の確認（#26）、PR #29 で起動前の投稿設定の検証（#27）が `main` に入りました。
+
+これらは合成の利用者・合成署名のトークン・合成データでテストしただけで、Google と GitHub の実 grant、実環境での受入は検証していません。残る受入は次の3つです。
+
+- 利用者本人が非公開の環境設定を完了する。
+- 実環境でログイン・拒否・保存・復旧を確認する。
+- 無料の依頼を1件、掲載から検収まで完了する。
 
 残る前提と制約は次のとおりです。
 
@@ -35,7 +41,7 @@ Google ログインと社内運用の必須設定は、作業ブランチの候�
 | M1 実用基盤 | ローカル実装完了 | サーバーセッション、SQLite 保存、掲載・納品・検収・取消の本人権限を API で強制する。実 OAuth 接続や本番 DB 運用は未検証。 | [#3](https://github.com/maasa1221/agent-guild/issues/3)、[#4](https://github.com/maasa1221/agent-guild/issues/4)、[#5](https://github.com/maasa1221/agent-guild/issues/5) |
 | M2 信頼できる掲載・検収 | ローカル実装完了 | 競合と重複検収を防ぐ監査可能な状態遷移、AI 利用・承認証跡の確認、投稿乱用への停止手段を備える。公開運用の合格ではない。 | [#6](https://github.com/maasa1221/agent-guild/issues/6)、[#7](https://github.com/maasa1221/agent-guild/issues/7)、[#8](https://github.com/maasa1221/agent-guild/issues/8) |
 | M3 USDC の可否判断 | 未決 / Todo | 法務、決済事業者、資産管理責任、本人確認、検収・紛争・返金、障害時対応を確認して可否を記録する。可能と判断された場合だけ、別 Issue で資金を扱わない sandbox 限定試験を定義する。 | [#9](https://github.com/maasa1221/agent-guild/issues/9) |
-| M4 公開運用判断 | 社内限定で公開可（2026-10-14）。実環境での受入は未完了 | 無料版の社内公開構成は PR #19 で `main` に入った。Google/GitHub の SSO と社内運用の必須設定は候補実装で、レビューと merge を待つ。必須の入力が決まり、実環境での導入・ログイン・復旧を確認したら #10 を閉じられる。 | [#10](https://github.com/maasa1221/agent-guild/issues/10)、[#20](https://github.com/maasa1221/agent-guild/issues/20)、[#21](https://github.com/maasa1221/agent-guild/issues/21)、[#22](https://github.com/maasa1221/agent-guild/issues/22)、[#23](https://github.com/maasa1221/agent-guild/issues/23) |
+| M4 公開運用判断 | 社内限定で公開可（2026-10-14）。実環境での受入は未完了 | 無料版の社内公開構成は PR #19、Node.js の最低版は PR #24、Google/GitHub の SSO と社内運用の必須設定は PR #25、バックアップと投稿設定の検証は PR #28・#29 で `main` に入った（#20〜#23、#26、#27 は Done）。上記の残る受入3つを実環境で完了したら #10 を閉じられる。 | [#10](https://github.com/maasa1221/agent-guild/issues/10)、[#20](https://github.com/maasa1221/agent-guild/issues/20)、[#21](https://github.com/maasa1221/agent-guild/issues/21)、[#22](https://github.com/maasa1221/agent-guild/issues/22)、[#23](https://github.com/maasa1221/agent-guild/issues/23) |
 
 [#1](https://github.com/maasa1221/agent-guild/issues/1) はロードマップ管理として open / Project Todo のままです。次のゲートは2つあり、**別々に判断**します。#9 は実送金の可否で、保留のままです。#10 は社内公開の受入で、実環境で確認するまで open のままにします。この文書は、Issue を閉じたり、社外公開や実送金を許可したりするものではありません。#10 の合成 DB 復元と既存認証・権限テストの照合結果、残る判断は [運用準備メモ](decision-readiness.md) に記録しています。
 
