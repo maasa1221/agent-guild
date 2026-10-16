@@ -31,6 +31,19 @@ for d in "${domains[@]}"; do
   [[ "$d" =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$ ]] && [ "${#d}" -le 253 ] && ! placeholder "$d" || fail 'app.env の AGENT_GUILD_GOOGLE_DOMAINS は小文字の Workspace ドメインをカンマ区切りで指定してください。'
 done
 
+# 投稿制限は任意。未設定と空は実行時の既定値（5 件 / 60000 ms）になる。server/config.mjs と同じく、
+# 前後の空白・タブを許す 10 進の整数（先頭の + と 0 は可）だけを範囲内で受け付ける。
+# 桁数を先に確かめ、比較で値がエラー出力に出ないようにする。
+bounded_integer() {
+  local LC_ALL=C digits re=$'^[ \t]*\\+?0*([0-9]+)[ \t]*$'
+  [ -z "$1" ] && return 0
+  [[ "$1" =~ $re ]] || return 1
+  digits=${BASH_REMATCH[1]}
+  [ "${#digits}" -le "${#3}" ] && [ "$digits" -ge "$2" ] && [ "$digits" -le "$3" ]
+}
+bounded_integer "$(value app.env AGENT_GUILD_POST_LIMIT)" 1 100 || fail 'app.env の AGENT_GUILD_POST_LIMIT は 1〜100 の整数にするか、空にしてください。'
+bounded_integer "$(value app.env AGENT_GUILD_POST_WINDOW_MS)" 1000 86400000 || fail 'app.env の AGENT_GUILD_POST_WINDOW_MS は 1000〜86400000 の整数にするか、空にしてください。'
+
 # 10 進の prefix。先頭の 0 と 0 自体（全体を許す範囲）は受け付けない。
 prefix_ok() { [[ "$1" =~ ^[1-9][0-9]{0,2}$ ]] && [ "$1" -le "$2" ]; }
 # IPv4 は各 octet 0〜255。8 進と誤読される先頭 0（例: 010）は拒否する。

@@ -5,6 +5,7 @@ import {mkdtempSync,rmSync,writeFileSync} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {loadConfig} from './config.mjs';
 
 const deploy=path.join(path.dirname(fileURLToPath(import.meta.url)),'..','deploy');
 const APP={AGENT_GUILD_ORIGIN:'https://guild.fixture-corp.test',AGENT_GUILD_GITHUB_CLIENT_ID:'fixture-id',AGENT_GUILD_GITHUB_CLIENT_SECRET:'fixture-secret-value',AGENT_GUILD_GITHUB_ORG:'fixture-org',AGENT_GUILD_GOOGLE_CLIENT_ID:'fixture-google-client',AGENT_GUILD_GOOGLE_CLIENT_SECRET:'fixture-google-secret-value',AGENT_GUILD_GOOGLE_DOMAINS:'fixture-corp.test,second-corp.test'};
@@ -79,6 +80,32 @@ test('Google domains trim only outer whitespace, matching the runtime parser',t=
   for (const domains of ['fixture- corp.test','fixture-corp .test','fixture-corp.test, ',' , fixture-corp.test','fixture-corp.test,second corp.test']) {
     const result=preflight(t,{...APP,AGENT_GUILD_GOOGLE_DOMAINS:domains},CADDY);
     assert.equal(result.status,1,JSON.stringify(domains));
+  }
+});
+
+// 投稿制限は任意。preflight と実行時の loadConfig が同じ値を受け付け、同じ値を拒否することを確かめる。
+const POSTING_RANGES={AGENT_GUILD_POST_LIMIT:'1〜100',AGENT_GUILD_POST_WINDOW_MS:'1000〜86400000'};
+const POSTING_CASES={
+  AGENT_GUILD_POST_LIMIT:{accept:['','1','5','100','05','+7','007',' 10\t'],reject:['0','101','-1','invalid','5.5','5.0','1e1','0x10','Infinity','NaN',' ','\t','+','++5','5 5','１０','9'.repeat(400)]},
+  AGENT_GUILD_POST_WINDOW_MS:{accept:['','1000','60000','86400000','060000','+1000',' 2000 '],reject:['0','999','86400001','-1000','invalid','1000.5','1e3','0x3e8','Infinity','NaN',' ','+','1 000','9'.repeat(400)]},
+};
+
+test('optional posting limits: absent and empty pass, exact bounds pass, and preflight agrees with runtime',t=>{
+  assert.equal(preflight(t,APP,CADDY).status,0,'absent settings use defaults');
+  for (const [key,{accept,reject}] of Object.entries(POSTING_CASES)) {
+    for (const [text,expected] of [...accept.map(text=>[text,0]),...reject.map(text=>[text,1])]) {
+      const label=`${key}=${JSON.stringify(text.length>20?`${text.length} chars`:text)}`;
+      const result=preflight(t,{...APP,[key]:text},CADDY);
+      assert.equal(result.status,expected,`${label}: ${result.stdout}${result.stderr}`);
+      let runtime=0;
+      try { loadConfig({[key]:text}); } catch { runtime=1; }
+      assert.equal(runtime,expected,`runtime ${label}`);
+      if (expected) {
+        // 出力は項目名と範囲だけの固定文で、値や他の秘密値を含まない。
+        assert.equal(result.stdout,`app.env の ${key} は ${POSTING_RANGES[key]} の整数にするか、空にしてください。\n`,label);
+        assert.equal(result.stderr,'',label);
+      }
+    }
   }
 });
 

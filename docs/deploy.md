@@ -93,6 +93,7 @@ sudo bash /opt/agent-guild/deploy/setup.sh
 - 下の必須設定がすべてあり、空・例示値でないこと。
 - `AGENT_GUILD_ORIGIN` が `https://<AGENT_GUILD_DOMAIN>` と一致すること。
 - 組織名と Workspace ドメインの形式が正しいこと。
+- 任意の投稿制限（`AGENT_GUILD_POST_LIMIT`・`AGENT_GUILD_POST_WINDOW_MS`）が、空か範囲内の 10 進の整数であること。
 - `AGENT_GUILD_ALLOWED_IPS` が空でなく、正しい IPv4 / IPv6 アドレスか CIDR だけであること。prefix 0（`/0`・`/00` など）、先頭が 0 の prefix や IPv4 octet（`/08`・`010.0.0.1`）、未指定アドレス（`0.0.0.0`・`::`）、文書用の例示範囲、IPv4 埋め込み形式の IPv6（`::ffff:10.0.0.1`）は拒否する。
 
 検査に通ると、次を行います。
@@ -114,6 +115,7 @@ sudo bash /opt/agent-guild/deploy/setup.sh
 | app.env | `AGENT_GUILD_GITHUB_ORG` | 許可する GitHub 組織。必須。`your-org` のままは拒否。 |
 | app.env | `AGENT_GUILD_GOOGLE_CLIENT_ID` / `AGENT_GUILD_GOOGLE_CLIENT_SECRET` / `AGENT_GUILD_GOOGLE_DOMAINS` | Google OAuth クライアントと許可 Workspace ドメイン。3つとも必須。一部だけ、空の項目、不正な形式、例示ドメインは拒否。 |
 | app.env | `AGENT_GUILD_ADMIN_IDS` | 管理者の GitHub 数値 ID。任意。 |
+| app.env | `AGENT_GUILD_POST_LIMIT` / `AGENT_GUILD_POST_WINDOW_MS` | 投稿制限の件数（1〜100）と期間（1000〜86400000 ms）。任意。未設定・空は 5 件 / 60000 ms。10 進の整数（先頭の `+` と 0 は可）以外と範囲外は、事前確認と起動の両方で拒否。 |
 | caddy.env | `AGENT_GUILD_DOMAIN` | 公開するホスト名。 |
 | caddy.env | `AGENT_GUILD_ALLOWED_IPS` | 社内の接続元 IP / CIDR。空白区切り。 |
 
